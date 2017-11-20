@@ -66,6 +66,7 @@
 ^maint/
 ^scripts/
 ^local/
+^xt/
 ^MANIFEST\.SKIP
 ^README\.pod
 ^fatpack-maint-build.pl$

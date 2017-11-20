@@ -11,7 +11,11 @@ use Mojo::Collection 'c';
 use Mojo::File;
 use Mojo::Home;
 
+our $VERSION = '0.1';
+
 documentation $0;
+
+version $VERSION;
 
 extends 'Mojo::Base';
 

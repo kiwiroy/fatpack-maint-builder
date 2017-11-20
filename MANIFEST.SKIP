@@ -70,3 +70,4 @@
 ^MANIFEST\.SKIP
 ^README\.pod
 ^fatpack-maint-build.pl$
+.*\.tar\.gz$

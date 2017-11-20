@@ -87,7 +87,7 @@ e.g.
     requires 'https://github.com/kiwiroy/fatpack-maint-builder/releases/download/v1.0/FatPack-Maint-Build-1.0.tar.gz'
   };
 
-A simple `build.sh` will facilitate remembering how to run it.
+A simple C<build.sh> will facilitate remembering how to run it.
 
 e.g.
 
@@ -98,6 +98,10 @@ e.g.
       -target ./fatpack-maint-build.pl
 
 =head1 SYNOPSIS
+
+Examples:
+
+  fatpack-maint-build.pl -help
 
   fatpack-maint-build.pl -source scripts/script.pl -target script.pl
 

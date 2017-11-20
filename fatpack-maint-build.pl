@@ -38056,7 +38056,7 @@ unshift @INC, bless \%fatpacked, $class;
 
 
 
-use App::FatPacker;
+use App::FatPacker ();
 use Applify;
 use Mojo::Asset::Memory;
 use Mojo::Base -base;
@@ -38064,7 +38064,7 @@ use Mojo::Collection 'c';
 use Mojo::File;
 use Mojo::Home;
 
-our $VERSION = '0.1';
+our $VERSION = '0.1'; # bump this
 
 documentation $0;
 
@@ -38130,6 +38130,12 @@ fatpack-maint-build.pl - fatpack a script for distribution
 
 An easy to use script to fatpack a script. Either copy this to your repository
 C<maint> directory or install and add to your C<cpanfile> under a feature.
+
+e.g.
+
+  on develop => sub {
+    requires 'git@github.com:kiwiroy/fatpack-maint-builder.git';
+  };
 
 =head1 SYNOPSIS
 

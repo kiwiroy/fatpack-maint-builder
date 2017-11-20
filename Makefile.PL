@@ -18,12 +18,19 @@ if (-e 'fatpack-maint-build.pl') {
     }
 }
 
+sub get_version {
+  local @ARGV = @_;
+  my $code = do { local $/; <> };
+  my $app = eval "$code" or die $@;
+  return $app->_script->version;
+}
+
 WriteMakefile(
   NAME => 'FatPack::Maint::Build',
   AUTHOR => 'Roy Storey <kiwiroy@cpan.org>',
   LICENSE => 'artistic_2',
   ABSTRACT => 'fatpack a script for distribution',
-  VERSION => '0.1',
+  VERSION => get_version('./bin/fatpack-maint-build.pl'),
   EXE_FILES => [qw(bin/fatpack-maint-build.pl)],
   META_MERGE => {
     resources => {

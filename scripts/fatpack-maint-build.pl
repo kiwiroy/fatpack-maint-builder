@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 
-# DEVELOPERS: something
+# DEVELOPERS: Read maint/build.sh in the repo how to update this
 # __FATPACK__
 
 use App::FatPacker;
@@ -54,7 +54,6 @@ app {
   my $self = shift;
 
   $ENV{PERL5OPT} = '-I'.$self->includes;
-  say $ENV{PERL5OPT};
   unlink $self->target;
 
   $self->fatpack_script($self->source, $self->target, '#!/usr/bin/perl');
@@ -68,13 +67,16 @@ app {
 
 =head1 NAME
 
-fatpack-maint-build.pl
+fatpack-maint-build.pl - fatpack a script for distribution
 
 =head1 DESCRIPTION
 
+An easy to use script to fatpack a script. Either copy this to your repository
+C<maint> directory or install and add to your C<cpanfile> under a feature.
+
 =head1 SYNOPSIS
 
-fatpack-maint-build.pl -source scripts/script.pl -target script.pl
+  fatpack-maint-build.pl -source scripts/script.pl -target script.pl
 
 =head1 SEE ALSO
 

@@ -38064,7 +38064,7 @@ use Mojo::Collection 'c';
 use Mojo::File;
 use Mojo::Home;
 
-our $VERSION = '0.1'; # bump this
+our $VERSION = '1.0'; # bump this
 
 documentation $0;
 

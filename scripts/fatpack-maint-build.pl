@@ -11,6 +11,8 @@ use Mojo::Collection 'c';
 use Mojo::File;
 use Mojo::Home;
 
+documentation $0;
+
 extends 'Mojo::Base';
 
 has fatpacker => sub { App::FatPacker->new };
@@ -62,3 +64,24 @@ app {
   return 0;
 };
 
+=pod
+
+=head1 NAME
+
+fatpack-maint-build.pl
+
+=head1 DESCRIPTION
+
+=head1 SYNOPSIS
+
+fatpack-maint-build.pl -source scripts/script.pl -target script.pl
+
+=head1 SEE ALSO
+
+=over 4
+
+=item L<App::FatPacker>
+
+=back
+
+=cut

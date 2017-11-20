@@ -38134,8 +38134,21 @@ C<maint> directory or install and add to your C<cpanfile> under a feature.
 e.g.
 
   on develop => sub {
+    # master
     requires 'git@github.com:kiwiroy/fatpack-maint-builder.git';
+    # or release
+    requires 'https://github.com/kiwiroy/fatpack-maint-builder/releases/download/v1.0/FatPack-Maint-Build-1.0.tar.gz'
   };
+
+A simple `build.sh` will facilitate remembering how to run it.
+
+e.g.
+
+  #!/bin/sh
+
+  ./scripts/fatpack-maint-build.pl \
+      -source ./scripts/fatpack-maint-build.pl \
+      -target ./fatpack-maint-build.pl
 
 =head1 SYNOPSIS
 
@@ -38146,6 +38159,12 @@ e.g.
 =over 4
 
 =item L<App::FatPacker>
+
+=item L<App::cpanminus>
+
+=item L<Applify>
+
+=item L<Mojolicious>
 
 =back
 

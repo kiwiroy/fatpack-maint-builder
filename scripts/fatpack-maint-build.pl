@@ -156,7 +156,7 @@ e.g.
     # master
     requires 'git@github.com:kiwiroy/fatpack-maint-builder.git';
     # or release
-    requires 'https://github.com/kiwiroy/fatpack-maint-builder/releases/download/v1.0/FatPack-Maint-Build-1.0.tar.gz'
+    requires 'https://github.com/kiwiroy/fatpack-maint-builder/releases/download/v1.1/FatPack-Maint-Build-1.1.tar.gz'
   };
 
 A simple C<build.sh> will facilitate remembering how to run it.

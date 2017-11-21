@@ -38058,13 +38058,16 @@ unshift @INC, bless \%fatpacked, $class;
 
 use App::FatPacker ();
 use Applify;
+use Cwd qw(abs_path cwd);
+use File::Find qw(find);
+use File::Spec::Functions qw(catdir);
 use Mojo::Asset::Memory;
 use Mojo::Base -base;
 use Mojo::Collection 'c';
 use Mojo::File;
 use Mojo::Home;
 
-our $VERSION = '1.0'; # bump this
+our $VERSION = '1.1'; # bump this
 
 documentation $0;
 
@@ -38080,8 +38083,15 @@ sub fatpack_script {
 
   my $pack = $self->fatpacker;
   my @modules = split /\r?\n/, $pack->trace(args => [ $script ]);
-  my @packlists = $pack->packlists_containing(\@modules);
+  if ($self->verbose) {
+    say "Found " . @modules.  " modules";
+  }
 
+  my @packlists = $self->packlists_containing(\@modules);
+
+  if ($self->verbose) {
+    say "Found " . @packlists . " packlists";
+  }
   my $base = Mojo::Home->new->detect->to_abs->child('fatlib');
   $pack->packlists_to_tree($base, \@packlists);
 
@@ -38100,24 +38110,86 @@ sub fatpack_script {
   $base->remove_tree();
 }
 
+# :( re-implemented here to avoid https://git.io/vF58b and already FatPacked
+# entries in %INC
+sub packlists_containing {
+  my ($self, $targets) = @_;
+  my @targets;
+  local %INC = %INC;
+  {
+    local @INC = ('lib', @INC);
+    foreach my $t (@$targets) {
+      warn "Failed to load ${t}\n" if (ref($INC{$t}) && 0 == __require($t));
+      unless (eval { require $t; 1}) {
+        warn "Failed to load ${t}: $@\n"
+            ."Make sure you're not missing a packlist as a result\n";
+        next;
+      }
+      push @targets, $t;
+    }
+  }
+  my @search = grep -d $_, map catdir($_, 'auto'), @INC;
+  my %pack_rev;
+  find({
+    no_chdir => 1,
+    wanted => sub {
+      return unless /[\\\/]\.packlist$/ && -f $_;
+      $pack_rev{abs_path $_} = $File::Find::name for __lines_of($File::Find::name);
+    },
+  }, @search);
+  my %found; @found{map +($pack_rev{abs_path($INC{$_})}||()), @targets} = ();
+  sort keys %found;
+}
+
+# like perldoc -f require, but slimmer - only checks -e, -d and -b
+sub __require {
+  my ($filename) = @_;
+  if (exists $INC{$filename} and ref($INC{$filename})) {
+    foreach my $prefix (@INC) {
+      if (ref($prefix)) {
+        # not FatPacked entries
+        next;
+      }
+      my $realfilename = "$prefix/$filename";
+      next if ! -e $realfilename || -d _ || -b _;
+      $INC{$filename} = $realfilename;
+      return 1;
+    }
+  }
+  return 0;
+}
+
+sub __lines_of {
+  map +(chomp,$_)[1], do { local @ARGV = ($_[0]); <> };
+}
+
 has includes => sub { Mojo::Home->new->detect->to_abs->child('lib') };
 
 option file => source => 'path to source script', (
     required => 1, isa => 'Mojo::File');
 option file => target => 'path to target script', (
     required => 1, isa => 'Mojo::File');
+option flag => verbose => 'increase level of notification', default => 0;
 
 app {
   my $self = shift;
 
-  $ENV{PERL5OPT} = '-I'.$self->includes;
+  $ENV{PERL5OPT} = join(' ', '-I'.$self->includes,
+    ($ENV{PERL5OPT} ? $ENV{PERL5OPT} : ()));
+  say "PERL5OPT = $ENV{PERL5OPT}" if $self->verbose;
+
   unlink $self->target;
 
   $self->fatpack_script($self->source, $self->target, '#!/usr/bin/perl');
 
   chmod 0755, $self->target;
 
-  return 0;
+  if ($self->verbose and -e $self->target and -x _) {
+    say "wrote: " . $self->target;
+    say "filesize: ", (-s $self->target), " bytes";
+  }
+
+  return (-e $self->target and -x _ ? 0 : 1);
 };
 
 =pod

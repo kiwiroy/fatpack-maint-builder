@@ -145,6 +145,8 @@ app {
 
 fatpack-maint-build.pl - fatpack a script for distribution
 
+=for html <a href="https://travis-ci.org/kiwiroy/fatpack-maint-builder"><img src="https://travis-ci.org/kiwiroy/fatpack-maint-builder.svg?branch=master" alt="Travis Build Status"></a>
+
 =for html <a href="https://kritika.io/users/kiwiroy/repos/2685177578694295/heads/master/"><img src="https://kritika.io/users/kiwiroy/repos/2685177578694295/heads/master/status.svg" alt="Kritika Analysis Status" /></a>
 
 =head1 DESCRIPTION

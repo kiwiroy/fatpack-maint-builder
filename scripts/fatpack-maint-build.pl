@@ -145,6 +145,8 @@ app {
 
 fatpack-maint-build.pl - fatpack a script for distribution
 
+=for html <a href="https://kritika.io/users/kiwiroy/repos/2685177578694295/heads/master/"><img src="https://kritika.io/users/kiwiroy/repos/2685177578694295/heads/master/status.svg" alt="Kritika Analysis Status" /></a>
+
 =head1 DESCRIPTION
 
 An easy to use script to fatpack a script. Either copy this to your repository

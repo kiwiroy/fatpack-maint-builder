@@ -1,4 +1,4 @@
-
+# process with cpanm --installdeps --with-develop .
 
 on develop => sub {
    requires 'Applify' => "0.14";

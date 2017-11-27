@@ -38067,7 +38067,7 @@ use Mojo::Collection 'c';
 use Mojo::File;
 use Mojo::Home;
 
-our $VERSION = '1.1'; # bump this
+our $VERSION = '1.2'; # bump this
 
 documentation $0;
 
@@ -38080,6 +38080,7 @@ has fatpacker => sub { App::FatPacker->new };
 sub fatpack_script {
   my $self = shift;
   my ($script, $target, $shebang_replace) = @_;
+  my @replaced;
 
   my $pack = $self->fatpacker;
   my @modules = split /\r?\n/, $pack->trace(args => [ $script ]);
@@ -38099,15 +38100,17 @@ sub fatpack_script {
 
   my $packed = $pack->fatpack_file();
   my $lines = c(split /\r?\n/, Mojo::File->new($script)->slurp)->map(sub {
-    s|^#!/usr/bin/env perl|$shebang_replace| if $shebang_replace;
-    s/^#.*DEVELOPERS:.*/# DO NOT EDIT -- this is an auto generated file/;
-    s/^#.*__FATPACK__/$packed/;
+    $replaced[0] += $_ =~ s|^#!/usr/bin/env perl|$shebang_replace| if $shebang_replace;
+    $replaced[1] += $_ =~ s/^#.*DEVELOPERS:.*/# DO NOT EDIT -- this is an auto generated file/;
+    $replaced[2] += $_ =~ s/^#.*__FATPACK__/$packed/;
     $_;
   });
 
   $asset->add_chunk($lines->join("\n")->to_string)->move_to($target);
 
   $base->remove_tree();
+
+  return @replaced;
 }
 
 # :( re-implemented here to avoid https://git.io/vF58b and already FatPacked
@@ -38180,13 +38183,14 @@ app {
 
   unlink $self->target;
 
-  $self->fatpack_script($self->source, $self->target, '#!/usr/bin/perl');
+  my @replaced = $self->fatpack_script($self->source, $self->target, '#!/usr/bin/perl');
 
   chmod 0755, $self->target;
 
   if ($self->verbose and -e $self->target and -x _) {
     say "wrote: " . $self->target;
     say "filesize: ", (-s $self->target), " bytes";
+    say "fatpacked: ", $replaced[2] ? 'true' : 'false';
   }
 
   return (-e $self->target and -x _ ? 0 : 1);
@@ -38197,6 +38201,25 @@ app {
 =head1 NAME
 
 fatpack-maint-build.pl - fatpack a script for distribution
+
+=begin html
+
+<a href="https://travis-ci.org/kiwiroy/fatpack-maint-builder">
+  <img src="https://travis-ci.org/kiwiroy/fatpack-maint-builder.svg?branch=master"
+       alt="Travis Build Status">
+</a>
+
+<a href="https://coveralls.io/github/kiwiroy/fatpack-maint-builder?branch=master">
+  <img src="https://coveralls.io/repos/github/kiwiroy/fatpack-maint-builder/badge.svg?branch=master"
+       alt="Coverage Status" />
+</a>
+
+<a href="https://kritika.io/users/kiwiroy/repos/2685177578694295/heads/master/">
+  <img src="https://kritika.io/users/kiwiroy/repos/2685177578694295/heads/master/status.svg"
+       alt="Kritika Analysis Status" />
+</a>
+
+=end html
 
 =head1 DESCRIPTION
 
@@ -38229,6 +38252,19 @@ Examples:
   fatpack-maint-build.pl -help
 
   fatpack-maint-build.pl -source scripts/script.pl -target script.pl
+
+=head1 DETAILS
+
+The source script should include the string C<__FATPACK__> within a comment on a
+line on it's own. This will be replaced by the fatpacked code.
+
+The shebang line will be translated from C</usr/bin/env perl> to
+C</usr/bin/perl> for inclusion in L<EUMM|ExtUtils::MakeMaker> C<EXE_FILES>,
+where C<fixin()> will translate at C<make install> time.
+
+Optionally, the string C<DEVELOPERS: ...> can exist within a comment in the
+source script and will be replaced with a C<DO NOT EDIT> notice in the output
+file.
 
 =head1 SEE ALSO
 

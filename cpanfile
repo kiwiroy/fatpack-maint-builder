@@ -9,4 +9,5 @@ on develop => sub {
    requires 'Test::Pod::Coverage';
    requires 'Devel::Cover::Report::Coveralls' => '0.11';
    requires 'Devel::Cover::Report::Kritika';
+   requires 'Test::Applify' => "0.06";
 };

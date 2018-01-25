@@ -91,16 +91,17 @@ sub packlists_containing {
 # like perldoc -f require, but slimmer - only checks -e, -d and -b
 sub __require {
   my ($filename) = @_;
+  # uncoverable branch true
   if (exists $INC{$filename} and ref($INC{$filename})) {
     foreach my $prefix (@INC) {
       if (ref($prefix)) {
         # not FatPacked entries
-        next;
+        next; # uncoverable statement
       }
-      my $realfilename = "$prefix/$filename";
-      next if ! -e $realfilename || -d _ || -b _;
-      $INC{$filename} = $realfilename;
-      return 1;
+      my $realfilename = "$prefix/$filename"; # uncoverable statement
+      next if ! -e $realfilename || -d _ || -b _; # uncoverable statement
+      $INC{$filename} = $realfilename; # uncoverable statement
+      return 1; # uncoverable statement
     }
   }
   return 0;

@@ -21,7 +21,7 @@ $source->spurt(data_section __PACKAGE__, 'simple.pl');
 # first test original
 #
 my $t = new_ok('Test::Applify', ["./scripts/$name"]);
-$t->version_ok('1.1')
+$t->version_ok('1.2')
   ->documentation_ok
   ->is_required_option('source')
   ->is_required_option('target')

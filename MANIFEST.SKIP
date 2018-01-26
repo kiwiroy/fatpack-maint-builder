@@ -68,6 +68,8 @@
 ^local/
 ^xt/
 ^MANIFEST\.SKIP
-^README\.pod
+^README\.pod$
+^\.proverc$
+^\.travis\.yml$
 ^fatpack-maint-build.pl$
 .*\.tar\.gz$

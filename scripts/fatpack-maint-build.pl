@@ -11,7 +11,7 @@ use File::Spec::Functions qw(catdir);
 use Mojo::Asset::Memory;
 use Mojo::Base -base;
 use Mojo::Collection 'c';
-use Mojo::File;
+use Mojo::File ();
 use Mojo::Home;
 
 our $VERSION = '1.2'; # bump this
@@ -41,7 +41,7 @@ sub fatpack_script {
     say "Found " . @packlists . " packlists";
   }
   my $base = Mojo::Home->new->detect->to_abs->child('fatlib');
-  $pack->packlists_to_tree($base, \@packlists);
+  $pack->packlists_to_tree($base->to_string, \@packlists);
 
   my $asset = Mojo::Asset::Memory->new(max_memory_size => 2e7);
 
@@ -96,8 +96,9 @@ sub __require {
   my ($filename) = @_;
   # uncoverable branch true
   if (exists $INC{$filename} and ref($INC{$filename})) {
-    foreach my $prefix (@INC) {
-      if (ref($prefix)) {
+    foreach my $prefix (@INC) { # uncoverable statement
+      # uncoverable branch true
+      if (ref($prefix)) { # uncoverable statement
         # not FatPacked entries
         next; # uncoverable statement
       }

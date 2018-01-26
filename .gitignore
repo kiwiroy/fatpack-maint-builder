@@ -2,6 +2,7 @@
 *.bak
 *.old
 *.swp
+.prove
 /local
 
 /bin/*

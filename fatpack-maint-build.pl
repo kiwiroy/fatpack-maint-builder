@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 
 # DO NOT EDIT -- this is an auto generated file
 
@@ -24,7 +24,7 @@ $fatpacked{"App/FatPacker.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'A
   use File::Path qw(mkpath rmtree);
   use B qw(perlstring);
   
-  our $VERSION = '0.010007'; # 0.10.7
+  our $VERSION = '0.010008'; # v0.10.8
   
   $VERSION = eval $VERSION;
   
@@ -356,14 +356,31 @@ $fatpacked{"App/FatPacker.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'A
     $ fatpack tree `cat packlists`
     $ fatpack file myscript.pl >myscript.packed.pl
   
-  See the documentation for the L<fatpack> script itself for more information.
+  Each command is designed to be simple and self-contained so that you can modify
+  the input/output of each step as needed. See the documentation for the
+  L<fatpack> script itself for more information.
   
   The programmatic API for this code is not yet fully decided, hence the 0.x
   release version. Expect that to be cleaned up for 1.0.
   
+  =head1 CAVEATS
+  
+  As dependency module code is copied into the resulting file as text, only
+  pure-perl dependencies can be packed, not compiled XS code.
+  
+  The currently-installed dependencies to pack are found via F<.packlist> files,
+  which are generally only included in non-core distributions that were installed
+  by a CPAN installer. This is a feature; see L<fatpack/packlists-for> for
+  details. (a notable exception to this is FreeBSD, which, since its packaging
+  system is designed to work equivalently to a source install, does preserve
+  the packlist files)
+  
   =head1 SEE ALSO
   
   L<article for Perl Advent 2012|http://www.perladvent.org/2012/2012-12-14.html>
+  
+  L<pp> - PAR Packager, a much more complex architecture-dependent packer that
+  can pack compiled code and even a Perl interpreter
   
   =head1 SUPPORT
   
@@ -398,7 +415,9 @@ $fatpacked{"App/FatPacker.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'A
   
   djerius - Diab Jerius (cpan:DJERIUS) <djerius@cpan.org>
   
-  haarg - Graham Knop (cpan:HAARG> <haarg@haarg.org>
+  haarg - Graham Knop (cpan:HAARG) <haarg@haarg.org>
+  
+  grinnz - Dan Book (cpan:DBOOK) <dbook@cpan.org>
   
   Many more people are probably owed thanks for ideas. Yet
   another doc nit to fix.
@@ -542,7 +561,7 @@ $fatpacked{"Applify.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'APPLIFY
     ? 0    # this will be true when running under "fatpack"
     : eval 'use Sub::Name; 1' ? 1 : 0;
   
-  our $VERSION = '0.14';
+  our $VERSION = '0.15';
   our $PERLDOC       = 'perldoc';
   our $SUBCMD_PREFIX = "command";
   my $ANON = 1;
@@ -557,10 +576,10 @@ $fatpacked{"Applify.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'APPLIFY
     # cannot do ->can() as application_class isn't created yet.
     if ($self->_subcommand_activate($ARGV[0])) { shift @ARGV; }
     for my $option (@{$self->{options}}) {
-      my $switch = $self->_attr_to_option($option->{name});
+      my $options_key = $self->_attr_to_option($option->{name});
       push @options_spec, $self->_calculate_option_spec($option);
-      $options{$switch} = $option->{default}     if exists $option->{default};
-      $options{$switch} = [@{$options{$switch}}] if ref($options{$switch}) eq 'ARRAY';
+      $options{$options_key} = $option->{default}          if exists $option->{default};
+      $options{$options_key} = [@{$options{$options_key}}] if ref($options{$options_key}) eq 'ARRAY';
     }
   
     unless ($parser->getoptions(\%options, @options_spec, $self->_default_options)) {
@@ -783,6 +802,18 @@ $fatpacked{"Applify.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'APPLIFY
     return @default;
   }
   
+  sub _documentation_class_handle {
+    my ($self, $inc_entry, $inc_key) = @_;
+  
+    # check for FatPacked::140677333829776=HASH entry in %INC
+    # You can also insert hooks into the import facility by putting Perl code
+    # directly into the @INC array. There are three forms of hooks: subroutine
+    # references, array references, and blessed objects.
+    return $inc_entry->INC($inc_key) if ((ref($inc_entry) || 'CODE') !~ m/(CODE|ARRAY)/);
+    open my $fh, '<', $inc_entry or die "Failed to read synopsis from $inc_entry: $@";
+    return $fh;
+  }
+  
   sub _exit {
     my ($self, $reason) = @_;
     exit 0 unless ($reason =~ /^\d+$/);    # may change without warning...
@@ -879,15 +910,15 @@ $fatpacked{"Applify.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'APPLIFY
   sub _print_synopsis {
     my $self = shift;
     my $documentation = $self->documentation or return;
-    my $print;
+    my ($print, $classpath);
   
     unless (-e $documentation) {
       eval "use $documentation; 1" or die "Could not load $documentation: $@";
       $documentation =~ s!::!/!g;
-      $documentation = $INC{"$documentation.pm"};
+      $documentation = $INC{$classpath = "$documentation.pm"};
     }
   
-    open my $FH, '<', $documentation or die "Failed to read synopsis from $documentation: $@";
+    my $FH = $self->_documentation_class_handle($documentation, $classpath);
   
     while (<$FH>) {
       last if $print and /^=(?:cut|head1)/;
@@ -911,8 +942,7 @@ $fatpacked{"Applify.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'APPLIFY
     {
       no warnings 'redefine';
       local *Applify::app = sub {
-        Carp::confess(
-          "Looks like you have a typo in your script! Cannot have app{} inside a subcommand options block.");
+        Carp::confess("Looks like you have a typo in your script! Cannot have app{} inside a subcommand options block.");
       };
       $self->{subcommands}{$name}{adaptation}->($self);
     }
@@ -944,13 +974,13 @@ $fatpacked{"Applify.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'APPLIFY
   
   =head1 VERSION
   
-  0.14
+  0.15
   
   =head1 DESCRIPTION
   
-  This module should keep all the noise away and let you write scripts
-  very easily. These scripts can even be unittested even though they
-  are define directly in the script file and not in a module.
+  This module should keep all the noise away and let you write scripts very
+  easily. These scripts can even be unit tested even though they are defined
+  directly in the script file and not in a module.
   
   =head1 SYNOPSIS
   
@@ -968,6 +998,7 @@ $fatpacked{"Applify.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'APPLIFY
       return int rand 100;
     }
   
+    # app {...}; must be the last statement in the script
     app {
       my($self, @extra) = @_;
       my $exit_value = 0;
@@ -986,16 +1017,16 @@ $fatpacked{"Applify.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'APPLIFY
   =head1 APPLICATION CLASS
   
   This module will generate an application class, which C<$self> inside the
-  L</app> block refere to. This class will have:
+  L</app> block refer to. This class will have:
   
-  =over 4
+  =over 2
   
-  =item * new()
+  =item * C<new()>
   
   An object constructor. This method will not be auto generated if any of
   the classes given to L</extends> has the method C<new()>.
   
-  =item * run()
+  =item * C<run()>
   
   This method is basically the code block given to L</app>.
   
@@ -1004,7 +1035,7 @@ $fatpacked{"Applify.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'APPLIFY
   Other methods defined in the script file will be accesible from C<$self>
   inside C<app{}>.
   
-  =item * _script()
+  =item * C<_script()>
   
   This is an accessor which return the L<Applify> object which
   is refered to as C<$self> in this documentation.
@@ -1014,7 +1045,7 @@ $fatpacked{"Applify.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'APPLIFY
   
   =item * Other accessors
   
-  Any L</option> (application switch) will be available as an accessor on the
+  Any L</option> (application option) will be available as an accessor on the
   application object.
   
   =back
@@ -1032,36 +1063,27 @@ $fatpacked{"Applify.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'APPLIFY
   application. See L</SYNOPSIS> for example code. This function can also be
   called as a method on C<$self>.
   
-  =over 4
+  =over 2
   
-  =item * $type
+  =item * C<$type>
   
-  Used to define value types for this input.
+  Used to define value types for this input. Can be:
   
-  =over 4
+    | $type | Example             | Attribute value |
+    |-------|---------------------|-----------------|
+    | bool  | --foo, --no-foo     | foo=1, foo=0    |
+    | flag  | --foo, --no-foo     | foo=1, foo=0    |
+    | inc   | --verbose --verbose | verbose=2       |
+    | str   | --name batwoman     | name=batwoman   |
+    | int   | --answer 42         | answer=42       |
+    | num   | --pie 3.14          | pie=3.14        |
   
-  =item bool, flag
+  =item * C<$name>
   
-  =item inc
+  The name of an application option. This name will also be used as accessor name
+  inside the application. Example:
   
-  =item str
-  
-  =item int
-  
-  =item num
-  
-  =item file (TODO)
-  
-  =item dir (TODO)
-  
-  =back
-  
-  =item * $name
-  
-  The name of an application switch. This name will also be used as
-  accessor name inside the application. Example:
-  
-    # define an application switch:
+    # define an application option: 
     option file => some_file => '...';
   
     # call the application from command line:
@@ -1080,7 +1102,7 @@ $fatpacked{"Applify.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'APPLIFY
   
   =item * C<@args>
   
-  =over 4
+  =over 2
   
   =item * C<required>
   
@@ -1115,8 +1137,8 @@ $fatpacked{"Applify.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'APPLIFY
     documentation '/path/to/file';
     documentation 'Some::Module';
   
-  Specifies where to retrieve documentaion from when giving the C<--man>
-  switch to your script.
+  Specifies where to retrieve documentaion from when giving the C<--man> option
+  to your script.
   
   =head2 version
   
@@ -1124,7 +1146,7 @@ $fatpacked{"Applify.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'APPLIFY
     version $num;
   
   Specifies where to retrieve the version number from when giving the
-  C<--version> switch to your script.
+  C<--version> option to your script.
   
   =head2 extends
   
@@ -1180,7 +1202,7 @@ $fatpacked{"Applify.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'APPLIFY
   called as a method on C<$self>.
   
   IMPORTANT: This function must be the last function called in the script file
-  for unittests to work. Reason for this is that this function runs the
+  for unit tests to work. Reason for this is that this function runs the
   application in void context (started from command line), but returns the
   application object in list/scalar context (from L<perlfunc/do>).
   
@@ -1242,32 +1264,10 @@ APPLIFY
 
 $fatpacked{"Mojo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO';
   package Mojo;
-  use Mojo::Base -base;
+  use Mojo::Base -strict;
   
   # "Professor: These old Doomsday devices are dangerously unstable. I'll rest
   #             easier not knowing where they are."
-  use Carp ();
-  use Mojo::Home;
-  use Mojo::Log;
-  use Mojo::Transaction::HTTP;
-  use Mojo::UserAgent;
-  use Mojo::Util;
-  use Scalar::Util ();
-  
-  has home => sub { Mojo::Home->new->detect(ref shift) };
-  has log  => sub { Mojo::Log->new };
-  has ua   => sub {
-    my $ua = Mojo::UserAgent->new;
-    Scalar::Util::weaken $ua->server->app(shift)->{app};
-    return $ua;
-  };
-  
-  sub build_tx { Mojo::Transaction::HTTP->new }
-  
-  sub config { Mojo::Util::_stash(config => @_) }
-  
-  sub handler { Carp::croak 'Method "handler" not implemented in subclass' }
-  
   1;
   
   =encoding utf8
@@ -1278,26 +1278,38 @@ $fatpacked{"Mojo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO';
   
   =head1 SYNOPSIS
   
-    package MyApp;
-    use Mojo::Base 'Mojo';
+    # HTTP/WebSocket user agent
+    use Mojo::UserAgent;
+    my $ua = Mojo::UserAgent->new;
+    say $ua->get('www.mojolicious.org')->result->headers->server;
   
-    # All the complexities of CGI, PSGI, HTTP and WebSockets get reduced to a
-    # single method call!
-    sub handler {
-      my ($self, $tx) = @_;
+    # HTML/XML DOM parser with CSS selectors
+    use Mojo::DOM;
+    my $dom = Mojo::DOM->new('<div><b>Hello Mojo!</b></div>');
+    say $dom->at('div > b')->text;
   
-      # Request
-      my $method = $tx->req->method;
-      my $path   = $tx->req->url->path;
+    # Perl-ish templates
+    use Mojo::Template;
+    my $mt = Mojo::Template->new(vars => 1);
+    say $mt->render('Hello <%= $what %>!', {what => 'Mojo'});
   
-      # Response
+    # HTTP/WebSocket server
+    use Mojo::Server::Daemon;
+    my $daemon = Mojo::Server::Daemon->new(listen => ['http://*:8080']);
+    $daemon->unsubscribe('request')->on(request => sub {
+      my ($daemon, $tx) = @_;
       $tx->res->code(200);
-      $tx->res->headers->content_type('text/plain');
-      $tx->res->body("$method request for $path!");
-  
-      # Resume transaction
+      $tx->res->body('Hello Mojo!');
       $tx->resume;
+    });
+    $daemon->run;
+  
+    # Event loop
+    use Mojo::IOLoop;
+    for my $seconds (1 .. 5) {
+      Mojo::IOLoop->timer($seconds => sub { say $seconds });
     }
+    Mojo::IOLoop->start;
   
   =head1 DESCRIPTION
   
@@ -1309,85 +1321,9 @@ $fatpacked{"Mojo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO';
   
   See L<Mojolicious::Guides> for more!
   
-  =head1 ATTRIBUTES
-  
-  L<Mojo> implements the following attributes.
-  
-  =head2 home
-  
-    my $home = $app->home;
-    $app     = $app->home(Mojo::Home->new);
-  
-  The home directory of your application, defaults to a L<Mojo::Home> object
-  which stringifies to the actual path.
-  
-    # Portably generate path relative to home directory
-    my $path = $app->home->child('data', 'important.txt');
-  
-  =head2 log
-  
-    my $log = $app->log;
-    $app    = $app->log(Mojo::Log->new);
-  
-  The logging layer of your application, defaults to a L<Mojo::Log> object.
-  
-    # Log debug message
-    $app->log->debug('It works');
-  
-  =head2 ua
-  
-    my $ua = $app->ua;
-    $app   = $app->ua(Mojo::UserAgent->new);
-  
-  A full featured HTTP user agent for use in your applications, defaults to a
-  L<Mojo::UserAgent> object.
-  
-    # Perform blocking request
-    say $app->ua->get('example.com')->result->body;
-  
-  =head1 METHODS
-  
-  L<Mojo> inherits all methods from L<Mojo::Base> and implements the following
-  new ones.
-  
-  =head2 build_tx
-  
-    my $tx = $app->build_tx;
-  
-  Transaction builder, defaults to building a L<Mojo::Transaction::HTTP> object.
-  
-  =head2 config
-  
-    my $hash = $app->config;
-    my $foo  = $app->config('foo');
-    $app     = $app->config({foo => 'bar', baz => 23});
-    $app     = $app->config(foo => 'bar', baz => 23);
-  
-  Application configuration.
-  
-    # Remove value
-    my $foo = delete $app->config->{foo};
-  
-    # Assign multiple values at once
-    $app->config(foo => 'test', bar => 23);
-  
-  =head2 handler
-  
-    $app->handler(Mojo::Transaction::HTTP->new);
-  
-  The handler is the main entry point to your application or framework and will
-  be called for each new transaction, which will usually be a
-  L<Mojo::Transaction::HTTP> or L<Mojo::Transaction::WebSocket> object. Meant to
-  be overloaded in a subclass.
-  
-    sub handler {
-      my ($self, $tx) = @_;
-      ...
-    }
-  
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO
@@ -1413,6 +1349,7 @@ $fatpacked{"Mojo/Asset.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO
   sub mtime   { croak 'Method "mtime" not implemented by subclass' }
   sub size    { croak 'Method "size" not implemented by subclass' }
   sub slurp   { croak 'Method "slurp" not implemented by subclass' }
+  sub to_file { croak 'Method "to_file" not implemented by subclass' }
   
   1;
   
@@ -1434,6 +1371,7 @@ $fatpacked{"Mojo/Asset.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO
     sub mtime     {...}
     sub size      {...}
     sub slurp     {...}
+    sub to_file   {...}
   
   =head1 DESCRIPTION
   
@@ -1524,9 +1462,16 @@ $fatpacked{"Mojo/Asset.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO
   
   Read all asset data at once. Meant to be overloaded in a subclass.
   
+  =head2 to_file
+  
+    my $file = $asset->to_file;
+  
+  Convert asset to L<Mojo::Asset::File> object. Meant to be overloaded in a
+  subclass.
+  
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_ASSET
@@ -1563,9 +1508,12 @@ $fatpacked{"Mojo/Asset/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
   sub DESTROY {
     my $self = shift;
+  
     return unless $self->cleanup && defined(my $path = $self->path);
     if (my $handle = $self->handle) { close $handle }
-    unlink $path if -w $path;
+  
+    # Only the process that created the file is allowed to remove it
+    Mojo::File->new($path)->remove if -w $path && ($self->{pid} // $$) == $$;
   }
   
   sub add_chunk {
@@ -1589,7 +1537,7 @@ $fatpacked{"Mojo/Asset/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
     # Sliding window search
     my $offset = 0;
-    my $start = $handle->sysread(my $window, $len);
+    my $start  = $handle->sysread(my $window, $len);
     while ($offset < $end) {
   
       # Read as much as possible
@@ -1643,6 +1591,12 @@ $fatpacked{"Mojo/Asset/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
   sub mtime { (stat shift->handle)[9] }
   
+  sub new {
+    my $file = shift->SUPER::new(@_);
+    $file->{pid} = $$;
+    return $file;
+  }
+  
   sub size { -s shift->handle }
   
   sub slurp {
@@ -1652,6 +1606,8 @@ $fatpacked{"Mojo/Asset/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
     while ($ret = $handle->sysread(my $buffer, 131072, 0)) { $content .= $buffer }
     return defined $ret ? $content : croak "Can't read from asset: $!";
   }
+  
+  sub to_file {shift}
   
   1;
   
@@ -1762,6 +1718,14 @@ $fatpacked{"Mojo/Asset/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
   Modification time of asset.
   
+  =head2 new
+  
+    my $file = Mojo::Asset::File->new;
+    my $file = Mojo::Asset::File->new(path => '/home/sri/test.txt');
+    my $file = Mojo::Asset::File->new({path => '/home/sri/test.txt'});
+  
+  Construct a new L<Mojo::Asset::File> object.
+  
   =head2 size
   
     my $size = $file->size;
@@ -1774,9 +1738,16 @@ $fatpacked{"Mojo/Asset/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
   Read all asset data at once.
   
+  =head2 to_file
+  
+    $file = $file->to_file;
+  
+  Does nothing but return the invocant, since we already have a
+  L<Mojo::Asset::File> object.
+  
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_ASSET_FILE
@@ -1790,7 +1761,7 @@ $fatpacked{"Mojo/Asset/Memory.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
   
   has 'auto_upgrade';
   has max_memory_size => sub { $ENV{MOJO_MAX_MEMORY_SIZE} || 262144 };
-  has mtime => sub {$^T};
+  has mtime           => sub {$^T};
   
   sub add_chunk {
     my ($self, $chunk) = @_;
@@ -1798,15 +1769,15 @@ $fatpacked{"Mojo/Asset/Memory.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
     # Upgrade if necessary
     $self->{content} .= $chunk;
     return $self if !$self->auto_upgrade || $self->size <= $self->max_memory_size;
-    my $file = Mojo::Asset::File->new;
-    return $file->add_chunk($self->emit(upgrade => $file)->slurp);
+    $self->emit(upgrade => my $file = $self->to_file);
+    return $file;
   }
   
   sub contains {
     my ($self, $str) = @_;
   
     my $start = $self->start_range;
-    my $pos = index $self->{content} // '', $str, $start;
+    my $pos   = index $self->{content} // '', $str, $start;
     $pos -= $start if $start && $pos >= 0;
     my $end = $self->end_range;
   
@@ -1830,6 +1801,8 @@ $fatpacked{"Mojo/Asset/Memory.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
   sub size { length(shift->{content} // '') }
   
   sub slurp { shift->{content} // '' }
+  
+  sub to_file { Mojo::Asset::File->new->add_chunk(shift->slurp) }
   
   1;
   
@@ -1943,9 +1916,15 @@ $fatpacked{"Mojo/Asset/Memory.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
   
   Read all asset data at once.
   
+  =head2 to_file
+  
+    my $file = $mem->to_file;
+  
+  Convert asset to L<Mojo::Asset::File> object.
+  
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_ASSET_MEMORY
@@ -1956,7 +1935,8 @@ $fatpacked{"Mojo/Base.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   use strict;
   use warnings;
   use utf8;
-  use feature ();
+  use feature ':5.10';
+  use mro;
   
   # No imports because we get subclassed, a lot!
   use Carp         ();
@@ -1976,39 +1956,79 @@ $fatpacked{"Mojo/Base.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   sub DESTROY { }
   
   sub attr {
-    my ($self, $attrs, $value) = @_;
+    my ($self, $attrs, $value, %kv) = @_;
     return unless (my $class = ref $self || $self) && $attrs;
   
     Carp::croak 'Default has to be a code reference or constant value'
       if ref $value && ref $value ne 'CODE';
+    Carp::croak 'Unsupported attribute option' if grep { $_ ne 'weak' } keys %kv;
+  
+    # Weaken
+    if ($kv{weak}) {
+      state %weak_names;
+      unless ($weak_names{$class}) {
+        my $names = $weak_names{$class} = [];
+        my $sub   = sub {
+          my $self = shift->next::method(@_);
+          ref $self->{$_} and Scalar::Util::weaken $self->{$_} for @$names;
+          return $self;
+        };
+        Mojo::Util::monkey_patch(my $base = $class . '::_Base', 'new', $sub);
+        no strict 'refs';
+        unshift @{"${class}::ISA"}, $base;
+      }
+      push @{$weak_names{$class}}, ref $attrs eq 'ARRAY' ? @$attrs : $attrs;
+    }
   
     for my $attr (@{ref $attrs eq 'ARRAY' ? $attrs : [$attrs]}) {
       Carp::croak qq{Attribute "$attr" invalid} unless $attr =~ /^[a-zA-Z_]\w*$/;
   
       # Very performance-sensitive code with lots of micro-optimizations
-      if (ref $value) {
-        my $sub = sub {
+      my $sub;
+      if ($kv{weak}) {
+        if (ref $value) {
+          $sub = sub {
+            return exists $_[0]{$attr}
+              ? $_[0]{$attr}
+              : (
+              ref($_[0]{$attr} = $value->($_[0]))
+                && Scalar::Util::weaken($_[0]{$attr}),
+              $_[0]{$attr}
+              ) if @_ == 1;
+            ref($_[0]{$attr} = $_[1]) and Scalar::Util::weaken($_[0]{$attr});
+            $_[0];
+          };
+        }
+        else {
+          $sub = sub {
+            return $_[0]{$attr} if @_ == 1;
+            ref($_[0]{$attr} = $_[1]) and Scalar::Util::weaken($_[0]{$attr});
+            $_[0];
+          };
+        }
+      }
+      elsif (ref $value) {
+        $sub = sub {
           return
             exists $_[0]{$attr} ? $_[0]{$attr} : ($_[0]{$attr} = $value->($_[0]))
             if @_ == 1;
           $_[0]{$attr} = $_[1];
           $_[0];
         };
-        Mojo::Util::monkey_patch($class, $attr, $sub);
       }
       elsif (defined $value) {
-        my $sub = sub {
+        $sub = sub {
           return exists $_[0]{$attr} ? $_[0]{$attr} : ($_[0]{$attr} = $value)
             if @_ == 1;
           $_[0]{$attr} = $_[1];
           $_[0];
         };
-        Mojo::Util::monkey_patch($class, $attr, $sub);
       }
       else {
-        Mojo::Util::monkey_patch($class, $attr,
-          sub { return $_[0]{$attr} if @_ == 1; $_[0]{$attr} = $_[1]; $_[0] });
+        $sub
+          = sub { return $_[0]{$attr} if @_ == 1; $_[0]{$attr} = $_[1]; $_[0] };
       }
+      Mojo::Util::monkey_patch($class, $attr, $sub);
     }
   }
   
@@ -2016,39 +2036,38 @@ $fatpacked{"Mojo/Base.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     my ($class, $caller) = (shift, caller);
     return unless my @flags = @_;
   
-    # Base
-    if ($flags[0] eq '-base') { $flags[0] = $class }
-  
-    # Strict
-    elsif ($flags[0] eq '-strict') { $flags[0] = undef }
-  
-    # Role
-    elsif ($flags[0] eq '-role') {
-      Carp::croak 'Role::Tiny 2.000001+ is required for roles' unless ROLES;
-      eval "package $caller; use Role::Tiny; 1" or die $@;
-    }
-  
-    # Module
-    elsif ($flags[0] && !$flags[0]->can('new')) {
-      require(Mojo::Util::class_to_path($flags[0]));
-    }
-  
-    # "has" and possibly ISA
-    if ($flags[0]) {
-      no strict 'refs';
-      push @{"${caller}::ISA"}, $flags[0] unless $flags[0] eq '-role';
-      Mojo::Util::monkey_patch($caller, 'has', sub { attr($caller, @_) });
-    }
-  
     # Mojo modules are strict!
     $_->import for qw(strict warnings utf8);
     feature->import(':5.10');
   
-    # Signatures (Perl 5.20+)
-    if (($flags[1] || '') eq '-signatures') {
-      Carp::croak 'Subroutine signatures require Perl 5.20+' if $] < 5.020;
-      require experimental;
-      experimental->import('signatures');
+    while (my $flag = shift @flags) {
+  
+      # Base
+      if ($flag eq '-base') { push @flags, $class }
+  
+      # Role
+      elsif ($flag eq '-role') {
+        Carp::croak 'Role::Tiny 2.000001+ is required for roles' unless ROLES;
+        Mojo::Util::monkey_patch($caller, 'has', sub { attr($caller, @_) });
+        eval "package $caller; use Role::Tiny; 1" or die $@;
+      }
+  
+      # Signatures (Perl 5.20+)
+      elsif ($flag eq '-signatures') {
+        Carp::croak 'Subroutine signatures require Perl 5.20+' if $] < 5.020;
+        require experimental;
+        experimental->import('signatures');
+      }
+  
+      # Module
+      elsif ($flag !~ /^-/) {
+        no strict 'refs';
+        require(Mojo::Util::class_to_path($flag)) unless $flag->can('new');
+        push @{"${caller}::ISA"}, $flag;
+        Mojo::Util::monkey_patch($caller, 'has', sub { attr($caller, @_) });
+      }
+  
+      elsif ($flag ne '-strict') { Carp::croak "Unsupported flag: $flag" }
     }
   }
   
@@ -2126,6 +2145,7 @@ $fatpacked{"Mojo/Base.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     use warnings;
     use utf8;
     use feature ':5.10';
+    use mro;
     use IO::Handle ();
   
     # use Mojo::Base -base;
@@ -2133,6 +2153,7 @@ $fatpacked{"Mojo/Base.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     use warnings;
     use utf8;
     use feature ':5.10';
+    use mro;
     use IO::Handle ();
     push @ISA, 'Mojo::Base';
     sub has { Mojo::Base::attr(__PACKAGE__, @_) }
@@ -2142,6 +2163,7 @@ $fatpacked{"Mojo/Base.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     use warnings;
     use utf8;
     use feature ':5.10';
+    use mro;
     use IO::Handle ();
     require SomeBaseClass;
     push @ISA, 'SomeBaseClass';
@@ -2152,11 +2174,12 @@ $fatpacked{"Mojo/Base.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     use warnings;
     use utf8;
     use feature ':5.10';
+    use mro;
     use IO::Handle ();
     use Role::Tiny;
     sub has { Mojo::Base::attr(__PACKAGE__, @_) }
   
-  On Perl 5.20+ you can also append a C<-signatures> flag to all three forms and
+  On Perl 5.20+ you can also use the C<-signatures> flag with all four forms and
   enable support for L<subroutine signatures|perlsub/"Signatures">.
   
     # Also enable signatures
@@ -2167,6 +2190,35 @@ $fatpacked{"Mojo/Base.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   
   This will also disable experimental warnings on versions of Perl where this
   feature was still experimental.
+  
+  =head1 FLUENT INTERFACES
+  
+  Fluent interfaces are a way to design object-oriented APIs around method
+  chaining to create domain-specific languages, with the goal of making the
+  readablity of the source code close to written prose.
+  
+    package Duck;
+    use Mojo::Base -base;
+  
+    has 'name';
+  
+    sub quack {
+      my $self = shift;
+      my $name = $self->name;
+      say "$name: Quack!"
+    }
+  
+  L<Mojo::Base> will help you with this by having all attribute accessors created
+  with L</"has"> (or L</"attr">) return their invocant (C<$self>) whenever they
+  are used to assign a new attribute value.
+  
+    Duck->new->name('Donald')->quack;
+  
+  In this case the C<name> attribute accessor is called on the object created by
+  C<Duck-E<gt>new>. It assigns a new attribute value and then returns the C<Duck>
+  object, so the C<quack> method can be called on it afterwards. These method
+  chains can continue until one of the methods called does not return the C<Duck>
+  object.
   
   =head1 FUNCTIONS
   
@@ -2181,6 +2233,9 @@ $fatpacked{"Mojo/Base.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     has name => sub {...};
     has ['name1', 'name2', 'name3'] => 'foo';
     has ['name1', 'name2', 'name3'] => sub {...};
+    has name => sub {...}, weak => 1;
+    has name => undef, weak => 1;
+    has ['name1', 'name2', 'name3'] => sub {...}, weak => 1;
   
   Create attributes for hash-based objects, just like the L</"attr"> method.
   
@@ -2197,6 +2252,9 @@ $fatpacked{"Mojo/Base.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     SubClass->attr(name => sub {...});
     SubClass->attr(['name1', 'name2', 'name3'] => 'foo');
     SubClass->attr(['name1', 'name2', 'name3'] => sub {...});
+    SubClass->attr(name => sub {...}, weak => 1);
+    SubClass->attr(name => undef, weak => 1);
+    SubClass->attr(['name1', 'name2', 'name3'] => sub {...}, weak => 1);
   
   Create attribute accessors for hash-based objects, an array reference can be
   used to create more than one at a time. Pass an optional second argument to set
@@ -2204,6 +2262,19 @@ $fatpacked{"Mojo/Base.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   executed at accessor read time if there's no set value, and gets passed the
   current instance of the object as first argument. Accessors can be chained, that
   means they return their invocant when they are called with an argument.
+  
+  These options are currently available:
+  
+  =over 2
+  
+  =item weak
+  
+    weak => $bool
+  
+  Weaken attribute reference to avoid
+  L<circular references|perlref/"Circular-References"> and memory leaks.
+  
+  =back
   
   =head2 new
   
@@ -2251,7 +2322,7 @@ $fatpacked{"Mojo/Base.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_BASE
@@ -2269,9 +2340,9 @@ $fatpacked{"Mojo/ByteStream.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
   # Turn most functions from Mojo::Util into methods
   my @UTILS = (
-    qw(b64_decode b64_encode camelize decamelize hmac_sha1_sum html_unescape),
-    qw(md5_bytes md5_sum punycode_decode punycode_encode quote sha1_bytes),
-    qw(sha1_sum slugify term_escape trim unindent unquote url_escape),
+    qw(b64_decode b64_encode camelize decamelize gunzip gzip hmac_sha1_sum),
+    qw(html_unescape md5_bytes md5_sum punycode_decode punycode_encode quote),
+    qw(sha1_bytes sha1_sum slugify term_escape trim unindent unquote url_escape),
     qw(url_unescape xml_escape xor_encode)
   );
   for my $name (@UTILS) {
@@ -2307,8 +2378,8 @@ $fatpacked{"Mojo/ByteStream.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   sub size { length ${$_[0]} }
   
   sub split {
-    my ($self, $pattern) = @_;
-    return Mojo::Collection->new(map { $self->new($_) } split $pattern, $$self);
+    my ($self, $pat, $lim) = (shift, shift, shift // 0);
+    return Mojo::Collection->new(map { $self->new($_) } split $pat, $$self, $lim);
   }
   
   sub tap { shift->Mojo::Base::tap(@_) }
@@ -2426,6 +2497,18 @@ $fatpacked{"Mojo/ByteStream.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
     # "%E2%99%A5"
     b('♥')->encode->url_escape;
   
+  =head2 gunzip
+  
+    $stream = $stream->gunzip;
+  
+  Uncompress bytestream with L<Mojo::Util/"gunzip">.
+  
+  =head2 gzip
+  
+    stream = $stream->gzip;
+  
+  Compress bytestream with L<Mojo::Util/"gzip">.
+  
   =head2 hmac_sha1_sum
   
     $stream = $stream->hmac_sha1_sum('passw0rd');
@@ -2521,12 +2604,16 @@ $fatpacked{"Mojo/ByteStream.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   =head2 split
   
     my $collection = $stream->split(',');
+    my $collection = $stream->split(',', -1);
   
   Turn bytestream into L<Mojo::Collection> object containing L<Mojo::ByteStream>
   objects.
   
     # "One,Two,Three"
     b("one,two,three")->split(',')->map('camelize')->join(',');
+  
+    # "One,Two,Three,,,"
+    b("one,two,three,,,")->split(',', -1)->map('camelize')->join(',');
   
   =head2 tap
   
@@ -2631,7 +2718,7 @@ $fatpacked{"Mojo/ByteStream.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_BYTESTREAM
@@ -2709,7 +2796,7 @@ $fatpacked{"Mojo/Cache.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_CACHE
@@ -2718,10 +2805,12 @@ $fatpacked{"Mojo/Collection.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   package Mojo::Collection;
   use Mojo::Base -strict;
   
+  use re 'is_regexp';
   use Carp 'croak';
   use Exporter 'import';
   use List::Util;
   use Mojo::ByteStream;
+  use Mojo::Util 'deprecated';
   use Scalar::Util 'blessed';
   
   our @EXPORT_OK = ('c');
@@ -2746,7 +2835,7 @@ $fatpacked{"Mojo/Collection.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   sub first {
     my ($self, $cb) = (shift, shift);
     return $self->[0] unless $cb;
-    return List::Util::first { $_ =~ $cb } @$self if ref $cb eq 'Regexp';
+    return List::Util::first { $_ =~ $cb } @$self if is_regexp $cb;
     return List::Util::first { $_->$cb(@_) } @$self;
   }
   
@@ -2754,8 +2843,15 @@ $fatpacked{"Mojo/Collection.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
   sub grep {
     my ($self, $cb) = (shift, shift);
-    return $self->new(grep { $_ =~ $cb } @$self) if ref $cb eq 'Regexp';
+    return $self->new(grep { $_ =~ $cb } @$self) if is_regexp $cb;
     return $self->new(grep { $_->$cb(@_) } @$self);
+  }
+  
+  sub head {
+    my ($self, $size) = @_;
+    return $self->new(@$self) if $size > @$self;
+    return $self->new(@$self[0 .. ($size - 1)]) if $size >= 0;
+    return $self->new(@$self[0 .. ($#$self + $size)]);
   }
   
   sub join {
@@ -2786,7 +2882,9 @@ $fatpacked{"Mojo/Collection.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
   sub size { scalar @{$_[0]} }
   
+  # DEPRECATED!
   sub slice {
+    deprecated 'Mojo::Collection::slice is DEPRECATED';
     my $self = shift;
     return $self->new(@$self[@_]);
   }
@@ -2805,6 +2903,13 @@ $fatpacked{"Mojo/Collection.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
     return $self->new(@sorted);
   }
   
+  sub tail {
+    my ($self, $size) = @_;
+    return $self->new(@$self) if $size > @$self;
+    return $self->new(@$self[($#$self - ($size - 1)) .. $#$self]) if $size >= 0;
+    return $self->new(@$self[(0 - $size) .. $#$self]);
+  }
+  
   sub tap { shift->Mojo::Base::tap(@_) }
   
   sub to_array { [@{shift()}] }
@@ -2812,8 +2917,8 @@ $fatpacked{"Mojo/Collection.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   sub uniq {
     my ($self, $cb) = (shift, shift);
     my %seen;
-    return $self->new(grep { !$seen{$_->$cb(@_)}++ } @$self) if $cb;
-    return $self->new(grep { !$seen{$_}++ } @$self);
+    return $self->new(grep { !$seen{$_->$cb(@_) // ''}++ } @$self) if $cb;
+    return $self->new(grep { !$seen{$_          // ''}++ } @$self);
   }
   
   sub with_roles { shift->Mojo::Base::with_roles(@_) }
@@ -2960,6 +3065,20 @@ $fatpacked{"Mojo/Collection.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
     # Find all values that are greater than 5
     my $greater = $collection->grep(sub { $_ > 5 });
   
+  =head2 head
+  
+    my $new = $collection->head(4);
+    my $new = $collection->head(-2);
+  
+  Create a new collection with up to the specified number of elements from the
+  beginning of the collection. A negative number will count from the end.
+  
+    # "A B C"
+    c('A', 'B', 'C', 'D', 'E')->head(3)->join(' ');
+  
+    # "A B"
+    c('A', 'B', 'C', 'D', 'E')->head(-3)->join(' ');
+  
   =head2 join
   
     my $stream = $collection->join;
@@ -3021,15 +3140,6 @@ $fatpacked{"Mojo/Collection.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
   Create a new collection with all elements in reverse order.
   
-  =head2 slice
-  
-    my $new = $collection->slice(4 .. 7);
-  
-  Create a new collection with all selected elements.
-  
-    # "B C E"
-    c('A', 'B', 'C', 'D', 'E')->slice(1, 2, 4)->join(' ');
-  
   =head2 shuffle
   
     my $new = $collection->shuffle;
@@ -3054,6 +3164,20 @@ $fatpacked{"Mojo/Collection.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
     # Sort values case-insensitive
     my $case_insensitive = $collection->sort(sub { uc($a) cmp uc($b) });
   
+  =head2 tail
+  
+    my $new = $collection->tail(4);
+    my $new = $collection->tail(-2);
+  
+  Create a new collection with up to the specified number of elements from the
+  end of the collection. A negative number will count from the beginning.
+  
+    # "C D E"
+    c('A', 'B', 'C', 'D', 'E')->tail(3)->join(' ');
+  
+    # "D E"
+    c('A', 'B', 'C', 'D', 'E')->tail(-3)->join(' ');
+  
   =head2 tap
   
     $collection = $collection->tap(sub {...});
@@ -3075,7 +3199,8 @@ $fatpacked{"Mojo/Collection.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
   Create a new collection without duplicate elements, using the string
   representation of either the elements or the return value of the
-  callback/method.
+  callback/method to decide uniqueness. Note that C<undef> and empty string are
+  treated the same.
   
     # Longer version
     my $new = $collection->uniq(sub { $_->some_method(@args) });
@@ -3096,7 +3221,7 @@ $fatpacked{"Mojo/Collection.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_COLLECTION
@@ -3110,7 +3235,7 @@ $fatpacked{"Mojo/Content.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   use Mojo::Headers;
   use Scalar::Util 'looks_like_number';
   
-  has [qw(auto_decompress auto_relax expect_close relaxed skip_body)];
+  has [qw(auto_decompress auto_relax relaxed skip_body)];
   has headers           => sub { Mojo::Headers->new };
   has max_buffer_size   => sub { $ENV{MOJO_MAX_BUFFER_SIZE} || 262144 };
   has max_leftover_size => sub { $ENV{MOJO_MAX_LEFTOVER_SIZE} || 262144 };
@@ -3143,12 +3268,11 @@ $fatpacked{"Mojo/Content.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
     my ($self, $offset) = @_;
   
     $self->emit(drain => $offset) unless length($self->{body_buffer} //= '');
-    my $len = $self->headers->content_length;
-    return '' if looks_like_number $len && $len == $offset;
-    my $chunk = delete $self->{body_buffer};
-    return $self->{eof} ? '' : undef unless length $chunk;
+    return delete $self->{body_buffer} if length $self->{body_buffer};
+    return '' if $self->{eof};
   
-    return $chunk;
+    my $len = $self->headers->content_length;
+    return looks_like_number $len && $len == $offset ? '' : undef;
   }
   
   sub get_body_chunk {
@@ -3208,11 +3332,10 @@ $fatpacked{"Mojo/Content.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
     # Relaxed parsing
     my $headers = $self->headers;
-    my $len = $headers->content_length // '';
+    my $len     = $headers->content_length // '';
     if ($self->auto_relax && !length $len) {
       my $connection = lc($headers->connection // '');
-      $self->relaxed(1)
-        if $connection eq 'close' || (!$connection && $self->expect_close);
+      $self->relaxed(1) if $connection eq 'close' || !$connection;
     }
   
     # Chunked or relaxed content
@@ -3226,7 +3349,7 @@ $fatpacked{"Mojo/Content.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
     # Normal content
     $len = 0 unless looks_like_number $len;
     if ((my $need = $len - ($self->{size} ||= 0)) > 0) {
-      my $len = length $self->{buffer};
+      my $len   = length $self->{buffer};
       my $chunk = substr $self->{buffer}, 0, $need > $len ? $len : $need, '';
       $self->_decompress($chunk);
       $self->{size} += length $chunk;
@@ -3262,9 +3385,14 @@ $fatpacked{"Mojo/Content.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
   sub write_chunk {
     my ($self, $chunk, $cb) = @_;
-    $self->headers->transfer_encoding('chunked') unless $self->is_chunked;
-    $self->write(defined $chunk ? $self->_build_chunk($chunk) : $chunk, $cb);
+  
+    $self->headers->transfer_encoding('chunked') unless $self->{chunked};
+    @{$self}{qw(chunked dynamic)} = (1, 1);
+  
+    $self->{body_buffer} .= $self->_build_chunk($chunk) if defined $chunk;
+    $self->once(drain => $cb) if $cb;
     $self->{eof} = 1 if defined $chunk && !length $chunk;
+  
     return $self;
   }
   
@@ -3377,7 +3505,7 @@ $fatpacked{"Mojo/Content.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
     $self->{raw_size} += length($chunk //= '');
     $self->{pre_buffer} .= $chunk;
     $self->_parse_headers if ($self->{state} ||= 'headers') eq 'headers';
-    $self->emit('body') if $self->{state} ne 'headers' && !$self->{body}++;
+    $self->emit('body')   if $self->{state} ne 'headers' && !$self->{body}++;
   }
   
   1;
@@ -3446,7 +3574,7 @@ $fatpacked{"Mojo/Content.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
   Emitted when a new chunk of content arrives.
   
-    $content->unsubscribe('read')->on(read => sub {
+    $content->on(read => sub {
       my ($content, $bytes) = @_;
       say "Streaming: $bytes";
     });
@@ -3468,13 +3596,6 @@ $fatpacked{"Mojo/Content.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
     $content = $content->auto_relax($bool);
   
   Try to detect when relaxed parsing is necessary.
-  
-  =head2 expect_close
-  
-    my $bool = $content->expect_close;
-    $content = $content->expect_close($bool);
-  
-  Expect a response that is terminated with a connection close.
   
   =head2 headers
   
@@ -3698,7 +3819,7 @@ $fatpacked{"Mojo/Content.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_CONTENT
@@ -3721,7 +3842,7 @@ $fatpacked{"Mojo/Content/MultiPart.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
   sub body_size {
     my $self = shift;
   
-    # Check for existing Content-Lenght header
+    # Check for existing Content-Length header
     if (my $len = $self->headers->content_length) { return $len }
   
     # Calculate length of whole body
@@ -3747,9 +3868,9 @@ $fatpacked{"Mojo/Content/MultiPart.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
   
     # Add boundary to Content-Type header
     my $headers = $self->headers;
-    ($headers->content_type // '') =~ m!^(.*multipart/[^;]+)(.*)$!;
-    my $before = $1 || 'multipart/mixed';
-    my $after  = $2 || '';
+    my ($before, $after) = ('multipart/mixed', '');
+    ($before, $after) = ($1, $2)
+      if ($headers->content_type // '') =~ m!^(.*multipart/[^;]+)(.*)$!;
     $headers->content_type("$before; boundary=$boundary$after");
   
     return $boundary;
@@ -3765,17 +3886,22 @@ $fatpacked{"Mojo/Content/MultiPart.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     my ($self, $offset) = @_;
   
     # Body generator
-    return $self->generate_body_chunk($offset) if $self->{dynamic};
+    return $self->generate_body_chunk($offset) if $self->is_dynamic;
   
     # First boundary
-    my $boundary     = $self->build_boundary;
+    my $boundary     = $self->{boundary} //= $self->build_boundary;
     my $boundary_len = length($boundary) + 6;
     my $len          = $boundary_len - 2;
     return substr "--$boundary\x0d\x0a", $offset if $len > $offset;
   
+    # Skip parts that have already been processed
+    my $start = 0;
+    ($len, $start) = ($self->{last_len}, $self->{last_part} + 1)
+      if $self->{offset} && $offset > $self->{offset};
+  
     # Prepare content part by part
     my $parts = $self->parts;
-    for (my $i = 0; $i < @$parts; $i++) {
+    for (my $i = $start; $i < @$parts; $i++) {
       my $part = $parts->[$i];
   
       # Headers
@@ -3798,6 +3924,8 @@ $fatpacked{"Mojo/Content/MultiPart.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
       return substr "\x0d\x0a--$boundary\x0d\x0a", $offset - $len
         if ($len + $boundary_len) > $offset;
       $len += $boundary_len;
+  
+      @{$self}{qw(last_len last_part offset)} = ($len, $i, $offset);
     }
   }
   
@@ -4003,12 +4131,12 @@ $fatpacked{"Mojo/Content/MultiPart.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     my $multi
       = Mojo::Content::MultiPart->new({parts => [Mojo::Content::Single->new]});
   
-  Construct a new L<Mojo::Content::MultiPart> object and subscribe to L</"read">
-  event with default content parser.
+  Construct a new L<Mojo::Content::MultiPart> object and subscribe to event
+  L<Mojo::Content/"read"> with default content parser.
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_CONTENT_MULTIPART
@@ -4020,15 +4148,15 @@ $fatpacked{"Mojo/Content/Single.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
   use Mojo::Asset::Memory;
   use Mojo::Content::MultiPart;
   
-  has asset => sub { Mojo::Asset::Memory->new(auto_upgrade => 1) };
+  has asset        => sub { Mojo::Asset::Memory->new(auto_upgrade => 1) };
   has auto_upgrade => 1;
   
   sub body_contains { shift->asset->contains(shift) >= 0 }
   
   sub body_size {
     my $self = shift;
-    return ($self->headers->content_length || 0) if $self->{dynamic};
-    return $self->asset->size;
+    return ($self->headers->content_length || 0) if $self->is_dynamic;
+    return $self->{body_size} //= $self->asset->size;
   }
   
   sub clone {
@@ -4039,7 +4167,7 @@ $fatpacked{"Mojo/Content/Single.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
   
   sub get_body_chunk {
     my ($self, $offset) = @_;
-    return $self->generate_body_chunk($offset) if $self->{dynamic};
+    return $self->generate_body_chunk($offset) if $self->is_dynamic;
     return $self->asset->get_chunk($offset);
   }
   
@@ -4168,8 +4296,8 @@ $fatpacked{"Mojo/Content/Single.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
     my $single = Mojo::Content::Single->new(asset => Mojo::Asset::File->new);
     my $single = Mojo::Content::Single->new({asset => Mojo::Asset::File->new});
   
-  Construct a new L<Mojo::Content::Single> object and subscribe to L</"read">
-  event with default content parser.
+  Construct a new L<Mojo::Content::Single> object and subscribe to event
+  L<Mojo::Content/"read"> with default content parser.
   
   =head2 parse
   
@@ -4182,7 +4310,7 @@ $fatpacked{"Mojo/Content/Single.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_CONTENT_SINGLE
@@ -4274,7 +4402,7 @@ $fatpacked{"Mojo/Cookie.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_COOKIE
@@ -4350,7 +4478,7 @@ $fatpacked{"Mojo/Cookie/Request.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_COOKIE_REQUEST
@@ -4362,9 +4490,10 @@ $fatpacked{"Mojo/Cookie/Response.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   use Mojo::Date;
   use Mojo::Util qw(quote split_cookie_header);
   
-  has [qw(domain expires httponly max_age origin path secure)];
+  has [qw(domain expires host_only httponly max_age path samesite secure)];
   
-  my %ATTRS = map { $_ => 1 } qw(domain expires httponly max-age path secure);
+  my %ATTRS
+    = map { $_ => 1 } qw(domain expires httponly max-age path samesite secure);
   
   sub parse {
     my ($self, $str) = @_;
@@ -4392,7 +4521,7 @@ $fatpacked{"Mojo/Cookie/Response.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
     # Name and value
     return '' unless length(my $name = $self->name // '');
-    my $value = $self->value // '';
+    my $value  = $self->value // '';
     my $cookie = join '=', $name, $value =~ /[,;" ]/ ? quote $value : $value;
   
     # "expires"
@@ -4410,6 +4539,9 @@ $fatpacked{"Mojo/Cookie/Response.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
     # "HttpOnly"
     $cookie .= "; HttpOnly" if $self->httponly;
+  
+    # "Same-Site"
+    if (my $samesite = $self->samesite) { $cookie .= "; SameSite=$samesite" }
   
     # "Max-Age"
     if (defined(my $max = $self->max_age)) { $cookie .= "; Max-Age=$max" }
@@ -4458,6 +4590,14 @@ $fatpacked{"Mojo/Cookie/Response.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
   Expiration for cookie.
   
+  =head2 host_only
+  
+    my $bool = $cookie->host_only;
+    $cookie  = $cookie->host_only($bool);
+  
+  Host-only flag, indicating that the canonicalized request-host is identical to
+  the cookie's L</"domain">.
+  
   =head2 httponly
   
     my $bool = $cookie->httponly;
@@ -4473,19 +4613,22 @@ $fatpacked{"Mojo/Cookie/Response.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
   Max age for cookie.
   
-  =head2 origin
-  
-    my $origin = $cookie->origin;
-    $cookie    = $cookie->origin('mojolicious.org');
-  
-  Origin of the cookie.
-  
   =head2 path
   
     my $path = $cookie->path;
     $cookie  = $cookie->path('/test');
   
   Cookie path.
+  
+  =head2 samesite
+  
+    my $samesite = $cookie->samesite;
+    $cookie      = $cookie->samesite('Lax');
+  
+  SameSite value. Note that this attribute is B<EXPERIMENTAL> because even though
+  most commonly used browsers support the feature, there is no specification yet
+  besides
+  L<this draft|https://tools.ietf.org/html/draft-west-first-party-cookies-07>.
   
   =head2 secure
   
@@ -4514,7 +4657,7 @@ $fatpacked{"Mojo/Cookie/Response.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_COOKIE_RESPONSE
@@ -4531,15 +4674,15 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   
   # "Fry: This snow is beautiful. I'm glad global warming never happened.
   #  Leela: Actually, it did. But thank God nuclear winter canceled it out."
-  use Carp 'croak';
   use Mojo::Collection;
   use Mojo::DOM::CSS;
   use Mojo::DOM::HTML;
-  use Scalar::Util 'weaken';
+  use Scalar::Util qw(blessed weaken);
+  use Storable 'dclone';
   
   sub all_text { _text(_nodes(shift->tree), 1) }
   
-  sub ancestors { _select($_[0]->_collect([$_[0]->_ancestors]), $_[1]) }
+  sub ancestors { _select($_[0]->_collect([_ancestors($_[0]->tree)]), $_[1]) }
   
   sub append { shift->_add(1, @_) }
   sub append_content { shift->_content(1, 0, @_) }
@@ -4554,7 +4697,7 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
     my $self = shift;
   
     # Hash
-    my $tree = $self->tree;
+    my $tree  = $self->tree;
     my $attrs = $tree->[0] ne 'tag' ? {} : $tree->[2];
     return $attrs unless @_;
   
@@ -4589,10 +4732,13 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   
   sub descendant_nodes { $_[0]->_collect(_all(_nodes($_[0]->tree))) }
   
-  sub find { $_[0]->_collect($_[0]->_css->select($_[1])) }
+  sub find {
+    my $self = shift;
+    return $self->_collect($self->_css->select(@_));
+  }
   
-  sub following { _select($_[0]->_collect($_[0]->_siblings(1, 1)), $_[1]) }
-  sub following_nodes { $_[0]->_collect($_[0]->_siblings(0, 1)) }
+  sub following { _select($_[0]->_collect(_siblings($_[0]->tree, 1, 1)), $_[1]) }
+  sub following_nodes { $_[0]->_collect(_siblings($_[0]->tree, 0, 1)) }
   
   sub matches { shift->_css->matches(@_) }
   
@@ -4603,7 +4749,7 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   
     # Extract namespace prefix and search parents
     my $ns = $tree->[1] =~ /^(.*?):/ ? "xmlns:$1" : undef;
-    for my $node ($tree, $self->_ancestors) {
+    for my $node ($tree, _ancestors($tree)) {
   
       # Namespace for prefix
       my $attrs = $node->[2];
@@ -4618,12 +4764,20 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   
   sub new {
     my $class = shift;
-    my $self = bless \Mojo::DOM::HTML->new, ref $class || $class;
+    my $self  = bless \Mojo::DOM::HTML->new, ref $class || $class;
     return @_ ? $self->parse(@_) : $self;
   }
   
-  sub next      { $_[0]->_maybe($_[0]->_siblings(1, 1, 0)) }
-  sub next_node { $_[0]->_maybe($_[0]->_siblings(0, 1, 0)) }
+  sub new_tag {
+    my $self = shift;
+    my $new  = $self->new;
+    $$new->tag(@_);
+    $$new->xml($$self->xml) if ref $self;
+    return $new;
+  }
+  
+  sub next      { $_[0]->_maybe(_siblings($_[0]->tree, 1, 1, 0)) }
+  sub next_node { $_[0]->_maybe(_siblings($_[0]->tree, 0, 1, 0)) }
   
   sub parent {
     my $self = shift;
@@ -4631,16 +4785,16 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
     return $self->_build(_parent($tree), $self->xml);
   }
   
-  sub parse { shift->_delegate(parse => @_) }
+  sub parse { ${$_[0]}->parse($_[1]) and return $_[0] }
   
-  sub preceding { _select($_[0]->_collect($_[0]->_siblings(1, 0)), $_[1]) }
-  sub preceding_nodes { $_[0]->_collect($_[0]->_siblings(0)) }
+  sub preceding { _select($_[0]->_collect(_siblings($_[0]->tree, 1, 0)), $_[1]) }
+  sub preceding_nodes { $_[0]->_collect(_siblings($_[0]->tree, 0)) }
   
   sub prepend { shift->_add(0, @_) }
   sub prepend_content { shift->_content(0, 0, @_) }
   
-  sub previous      { $_[0]->_maybe($_[0]->_siblings(1, 0, -1)) }
-  sub previous_node { $_[0]->_maybe($_[0]->_siblings(0, 0, -1)) }
+  sub previous      { $_[0]->_maybe(_siblings($_[0]->tree, 1, 0, -1)) }
+  sub previous_node { $_[0]->_maybe(_siblings($_[0]->tree, 0, 0, -1)) }
   
   sub remove { shift->replace('') }
   
@@ -4652,8 +4806,15 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   
   sub root {
     my $self = shift;
-    return $self unless my $tree = $self->_ancestors(1);
+    return $self unless my $tree = _ancestors($self->tree, 1);
     return $self->_build($tree, $self->xml);
+  }
+  
+  sub selector {
+    return undef unless (my $tree = shift->tree)->[0] eq 'tag';
+    return join ' > ',
+      reverse map { $_->[1] . ':nth-child(' . (@{_siblings($_, 1)} + 1) . ')' }
+      $tree, _ancestors($tree);
   }
   
   sub strip {
@@ -4674,9 +4835,9 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   
   sub text { _text(_nodes(shift->tree), 0) }
   
-  sub to_string { shift->_delegate('render') }
+  sub to_string { ${shift()}->render }
   
-  sub tree { shift->_delegate(tree => @_) }
+  sub tree { @_ > 1 ? (${$_[0]}->tree($_[1]) and return $_[0]) : ${$_[0]}->tree }
   
   sub type { shift->tree->[0] }
   
@@ -4705,7 +4866,7 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   sub wrap         { shift->_wrap(0, @_) }
   sub wrap_content { shift->_wrap(1, @_) }
   
-  sub xml { shift->_delegate(xml => @_) }
+  sub xml { @_ > 1 ? (${$_[0]}->xml($_[1]) and return $_[0]) : ${$_[0]}->xml }
   
   sub _add {
     my ($self, $offset, $new) = @_;
@@ -4726,9 +4887,9 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   }
   
   sub _ancestors {
-    my ($self, $root) = @_;
+    my ($tree, $root) = @_;
   
-    return () unless my $tree = _parent($self->tree);
+    return () unless $tree = _parent($tree);
     my @ancestors;
     do { push @ancestors, $tree }
       while ($tree->[0] eq 'tag') && ($tree = $tree->[3]);
@@ -4761,12 +4922,7 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   
   sub _css { Mojo::DOM::CSS->new(tree => shift->tree) }
   
-  sub _delegate {
-    my ($self, $method) = (shift, shift);
-    return $$self->$method unless @_;
-    $$self->$method(@_);
-    return $self;
-  }
+  sub _fragment { _link(my $r = ['root', @_], [@_]); $r }
   
   sub _link {
     my ($parent, $children) = @_;
@@ -4798,7 +4954,13 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   
   sub _parent { $_[0]->[$_[0][0] eq 'tag' ? 3 : 2] }
   
-  sub _parse { Mojo::DOM::HTML->new(xml => shift->xml)->parse(shift)->tree }
+  sub _parse {
+    my ($self, $input) = @_;
+    return Mojo::DOM::HTML->new(xml => $self->xml)->parse($input)->tree
+      unless blessed $input && $input->isa('Mojo::DOM');
+    my $tree = dclone $input->tree;
+    return $tree->[0] eq 'root' ? $tree : _fragment($tree);
+  }
   
   sub _replace {
     my ($self, $parent, $child, $nodes) = @_;
@@ -4809,9 +4971,9 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   sub _select { $_[1] ? $_[0]->grep(matches => $_[1]) : $_[0] }
   
   sub _siblings {
-    my ($self, $tags, $tail, $i) = @_;
+    my ($tree, $tags, $tail, $i) = @_;
   
-    return defined $i ? undef : [] if (my $tree = $self->tree)->[0] eq 'root';
+    return defined $i ? undef : [] if $tree->[0] eq 'root';
   
     my $nodes = _nodes(_parent($tree));
     my $match = -1;
@@ -4901,6 +5063,7 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   
     # Modify
     $dom->find('div p')->last->append('<p id="c">456</p>');
+    $dom->at('#c')->prepend($dom->new_tag('p', id => 'd', '789'));
     $dom->find(':not(p)')->map('strip');
   
     # Render
@@ -4992,6 +5155,7 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   =head2 append
   
     $dom = $dom->append('<p>I ♥ Mojolicious!</p>');
+    $dom = $dom->append(Mojo::DOM->new);
   
   Append HTML/XML fragment to this node (for all node types other than C<root>).
   
@@ -5006,6 +5170,7 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   =head2 append_content
   
     $dom = $dom->append_content('<p>I ♥ Mojolicious!</p>');
+    $dom = $dom->append_content(Mojo::DOM->new);
   
   Append HTML/XML fragment (for C<root> and C<tag> nodes) or raw content to this
   node's content.
@@ -5024,6 +5189,7 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   =head2 at
   
     my $result = $dom->at('div ~ p');
+    my $result = $dom->at('svg|line', svg => 'http://www.w3.org/2000/svg');
   
   Find first descendant element of this element matching the CSS selector and
   return it as a L<Mojo::DOM> object, or C<undef> if none could be found. All
@@ -5031,6 +5197,12 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   
     # Find first element with "svg" namespace definition
     my $namespace = $dom->at('[xmlns\:svg]')->{'xmlns:svg'};
+  
+  Trailing key/value pairs can be used to declare xml namespace aliases.
+  
+    # "<rect />"
+    $dom->parse('<svg xmlns="http://www.w3.org/2000/svg"><rect /></svg>')
+      ->at('svg|rect', svg => 'http://www.w3.org/2000/svg');
   
   =head2 attr
   
@@ -5082,6 +5254,7 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   
     my $str = $dom->content;
     $dom    = $dom->content('<p>I ♥ Mojolicious!</p>');
+    $dom    = $dom->content(Mojo::DOM->new);
   
   Return this node's content or replace it with HTML/XML fragment (for C<root>
   and C<tag> nodes) or raw content.
@@ -5125,6 +5298,7 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   =head2 find
   
     my $collection = $dom->find('div ~ p');
+    my $collection = $dom->find('svg|line', svg => 'http://www.w3.org/2000/svg');
   
   Find all descendant elements of this element matching the CSS selector and
   return a L<Mojo::Collection> object containing these elements as L<Mojo::DOM>
@@ -5141,6 +5315,12 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   
     # Find elements with a class that contains dots
     my @divs = $dom->find('div.foo\.bar')->each;
+  
+  Trailing key/value pairs can be used to declare xml namespace aliases.
+  
+    # "<rect />"
+    $dom->parse('<svg xmlns="http://www.w3.org/2000/svg"><rect /></svg>')
+      ->find('svg|rect', svg => 'http://www.w3.org/2000/svg')->first;
   
   =head2 following
   
@@ -5167,6 +5347,7 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   =head2 matches
   
     my $bool = $dom->matches('div ~ p');
+    my $bool = $dom->matches('svg|line', svg => 'http://www.w3.org/2000/svg');
   
   Check if this element matches the CSS selector. All selectors from
   L<Mojo::DOM::CSS/"SELECTORS"> are supported.
@@ -5178,6 +5359,12 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
     # False
     $dom->parse('<p class="a">A</p>')->at('p')->matches('.b');
     $dom->parse('<p class="a">A</p>')->at('p')->matches('p[id]');
+  
+  Trailing key/value pairs can be used to declare xml namespace aliases.
+  
+    # True
+    $dom->parse('<svg xmlns="http://www.w3.org/2000/svg"><rect /></svg>')
+      ->matches('svg|rect', svg => 'http://www.w3.org/2000/svg');
   
   =head2 namespace
   
@@ -5198,6 +5385,45 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   
   Construct a new scalar-based L<Mojo::DOM> object and L</"parse"> HTML/XML
   fragment if necessary.
+  
+  =head2 new_tag
+  
+    my $tag = Mojo::DOM->new_tag('div');
+    my $tag = $dom->new_tag('div');
+    my $tag = $dom->new_tag('div', id => 'foo', hidden => undef);
+    my $tag = $dom->new_tag('div', 'safe content');
+    my $tag = $dom->new_tag('div', id => 'foo', 'safe content');
+    my $tag = $dom->new_tag('div', data => {mojo => 'rocks'}, 'safe content');
+    my $tag = $dom->new_tag('div', id => 'foo', sub { 'unsafe content' });
+  
+  Construct a new L<Mojo::DOM> object for an HTML/XML tag with or without
+  attributes and content. The C<data> attribute may contain a hash reference with
+  key/value pairs to generate attributes from.
+  
+    # "<br>"
+    $dom->new_tag('br');
+  
+    # "<div></div>"
+    $dom->new_tag('div');
+  
+    # "<div id="foo" hidden></div>"
+    $dom->new_tag('div', id => 'foo', hidden => undef);
+  
+    # "<div>test &amp; 123</div>"
+    $dom->new_tag('div', 'test & 123');
+  
+    # "<div id="foo">test &amp; 123</div>"
+    $dom->new_tag('div', id => 'foo', 'test & 123');
+  
+    # "<div data-foo="1" data-bar="test">test &amp; 123</div>""
+    $dom->new_tag('div', data => {foo => 1, Bar => 'test'}, 'test & 123');
+  
+    # "<div id="foo">test & 123</div>"
+    $dom->new_tag('div', id => 'foo', sub { 'test & 123' });
+  
+    # "<div>Hello<b>Mojo!</b></div>"
+    $dom->parse('<div>Hello</div>')->at('div')
+      ->append_content($dom->new_tag('b', 'Mojo!'))->root;
   
   =head2 next
   
@@ -5268,6 +5494,7 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   =head2 prepend
   
     $dom = $dom->prepend('<p>I ♥ Mojolicious!</p>');
+    $dom = $dom->prepend(Mojo::DOM->new);
   
   Prepend HTML/XML fragment to this node (for all node types other than C<root>).
   
@@ -5282,6 +5509,7 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   =head2 prepend_content
   
     $dom = $dom->prepend_content('<p>I ♥ Mojolicious!</p>');
+    $dom = $dom->prepend_content(Mojo::DOM->new);
   
   Prepend HTML/XML fragment (for C<root> and C<tag> nodes) or raw content to this
   node's content.
@@ -5338,6 +5566,7 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   =head2 replace
   
     my $parent = $dom->replace('<div>I ♥ Mojolicious!</div>');
+    my $parent = $dom->replace(Mojo::DOM->new);
   
   Replace this node with HTML/XML fragment and return L</"root"> (for C<root>
   nodes) or L</"parent">.
@@ -5354,6 +5583,18 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
     my $root = $dom->root;
   
   Return L<Mojo::DOM> object for C<root> node.
+  
+  =head2 selector
+  
+    my $selector = $dom->selector;
+  
+  Get a unique CSS selector for this element.
+  
+    # "ul:nth-child(1) > li:nth-child(2)"
+    $dom->parse('<ul><li>Test</li><li>123</li></ul>')->find('li')->last->selector;
+  
+    # "p:nth-child(1) > b:nth-child(1) > i:nth-child(1)"
+    $dom->parse('<p><b><i>Test</i></b></p>')->at('i')->selector;
   
   =head2 strip
   
@@ -5481,6 +5722,7 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   =head2 wrap
   
     $dom = $dom->wrap('<div></div>');
+    $dom = $dom->wrap(Mojo::DOM->new);
   
   Wrap HTML/XML fragment around this node (for all node types other than C<root>),
   placing it as the last child of the first innermost element.
@@ -5500,6 +5742,7 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   =head2 wrap_content
   
     $dom = $dom->wrap_content('<div></div>');
+    $dom = $dom->wrap_content(Mojo::DOM->new);
   
   Wrap HTML/XML fragment around this node's content (for C<root> and C<tag>
   nodes), placing it as the last children of the first innermost element.
@@ -5554,7 +5797,7 @@ $fatpacked{"Mojo/DOM.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_D
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_DOM
@@ -5581,7 +5824,7 @@ $fatpacked{"Mojo/DOM/CSS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
   sub matches {
     my $tree = shift->tree;
-    return $tree->[0] ne 'tag' ? undef : _match(_compile(shift), $tree, $tree);
+    return $tree->[0] ne 'tag' ? undef : _match(_compile(@_), $tree, $tree);
   }
   
   sub select     { _select(0, shift->tree, _compile(@_)) }
@@ -5636,7 +5879,7 @@ $fatpacked{"Mojo/DOM/CSS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   }
   
   sub _compile {
-    my $css = trim "$_[0]";
+    my ($css, %ns) = (trim('' . shift), @_);
   
     my $group = [[]];
     while (my $selectors = $group->[-1]) {
@@ -5665,7 +5908,7 @@ $fatpacked{"Mojo/DOM/CSS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
         my ($name, $args) = (lc $1, $2);
   
         # ":matches" and ":not" (contains more selectors)
-        $args = _compile($args) if $name eq 'matches' || $name eq 'not';
+        $args = _compile($args, %ns) if $name eq 'matches' || $name eq 'not';
   
         # ":nth-*" (with An+B notation)
         $args = _equation($args) if $name =~ /^nth-/;
@@ -5681,7 +5924,9 @@ $fatpacked{"Mojo/DOM/CSS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
       # Tag
       elsif ($css =~ /\G((?:$ESCAPE_RE\s|\\.|[^,.#:[ >~+])+)/gco) {
-        push @$last, ['tag', _name($1)] unless $1 eq '*';
+        my $alias = (my $name = $1) =~ s/^([^|]*)\|// && $1 ne '*' ? $1 : undef;
+        my $ns = length $alias ? $ns{$alias} // return [['invalid']] : $alias;
+        push @$last, ['tag', $name eq '*' ? undef : _name($name), _unescape($ns)];
       }
   
       else {last}
@@ -5718,6 +5963,21 @@ $fatpacked{"Mojo/DOM/CSS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
   sub _name {qr/(?:^|:)\Q@{[_unescape(shift)]}\E$/}
   
+  sub _namespace {
+    my ($ns, $current) = @_;
+  
+    my $attr = $current->[1] =~ /^([^:]+):/ ? "xmlns:$1" : 'xmlns';
+    while ($current) {
+      last if $current->[0] eq 'root';
+      return $current->[2]{$attr} eq $ns if exists $current->[2]{$attr};
+  
+      $current = $current->[3];
+    }
+  
+    # Failing to match yields true if searching for no namespace, false otherwise
+    return !length $ns;
+  }
+  
   sub _pc {
     my ($class, $args, $current) = @_;
   
@@ -5737,26 +5997,35 @@ $fatpacked{"Mojo/DOM/CSS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
     # ":root"
     return $current->[3] && $current->[3][0] eq 'root' if $class eq 'root';
   
-    # ":nth-child", ":nth-last-child", ":nth-of-type" or ":nth-last-of-type"
-    if (ref $args) {
-      my $type = $class =~ /of-type$/ ? $current->[1] : undef;
-      my @siblings = @{_siblings($current, $type)};
-      @siblings = reverse @siblings if $class =~ /^nth-last/;
-  
-      for my $i (0 .. $#siblings) {
-        next if (my $result = $args->[0] * $i + $args->[1]) < 1;
-        last unless my $sibling = $siblings[$result - 1];
-        return 1 if $sibling eq $current;
-      }
+    # ":link" and ":visited"
+    if ($class eq 'link' || $class eq 'visited') {
+      return undef unless $current->[0] eq 'tag' && exists $current->[2]{href};
+      return !!grep { $current->[1] eq $_ } qw(a area link);
     }
   
     # ":only-child" or ":only-of-type"
-    elsif ($class eq 'only-child' || $class eq 'only-of-type') {
+    if ($class eq 'only-child' || $class eq 'only-of-type') {
       my $type = $class eq 'only-of-type' ? $current->[1] : undef;
       $_ ne $current and return undef for @{_siblings($current, $type)};
       return 1;
     }
   
+    # ":nth-child", ":nth-last-child", ":nth-of-type" or ":nth-last-of-type"
+    if (ref $args) {
+      my $type = $class eq 'nth-of-type'
+        || $class eq 'nth-last-of-type' ? $current->[1] : undef;
+      my @siblings = @{_siblings($current, $type)};
+      @siblings = reverse @siblings
+        if $class eq 'nth-last-child' || $class eq 'nth-last-of-type';
+  
+      for my $i (0 .. $#siblings) {
+        next if (my $result = $args->[0] * $i + $args->[1]) < 1;
+        return undef unless my $sibling = $siblings[$result - 1];
+        return 1 if $sibling eq $current;
+      }
+    }
+  
+    # Everything else
     return undef;
   }
   
@@ -5783,13 +6052,19 @@ $fatpacked{"Mojo/DOM/CSS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
       my $type = $s->[0];
   
       # Tag
-      if ($type eq 'tag') { return undef unless $current->[1] =~ $s->[1] }
+      if ($type eq 'tag') {
+        return undef if defined $s->[1] && $current->[1] !~ $s->[1];
+        return undef if defined $s->[2] && !_namespace($s->[2], $current);
+      }
   
       # Attribute
       elsif ($type eq 'attr') { return undef unless _attr(@$s[1, 2], $current) }
   
       # Pseudo-class
       elsif ($type eq 'pc') { return undef unless _pc(@$s[1, 2], $current) }
+  
+      # Invalid selector
+      else { return undef }
     }
   
     return 1;
@@ -5815,7 +6090,7 @@ $fatpacked{"Mojo/DOM/CSS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   sub _siblings {
     my ($current, $type) = @_;
   
-    my $parent = $current->[3];
+    my $parent   = $current->[3];
     my @siblings = grep { $_->[0] eq 'tag' }
       @$parent[($parent->[0] eq 'root' ? 1 : 4) .. $#$parent];
     @siblings = grep { $type eq $_->[1] } @siblings if defined $type;
@@ -5824,7 +6099,7 @@ $fatpacked{"Mojo/DOM/CSS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   }
   
   sub _unescape {
-    my $value = shift;
+    return undef unless defined(my $value = shift);
   
     # Remove escaped newlines
     $value =~ s/\\\n//g;
@@ -5845,6 +6120,9 @@ $fatpacked{"Mojo/DOM/CSS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
     # "~=" (word)
     return qr/(?:^|\s+)$value(?:\s+|$)/ if $op eq '~';
+  
+    # "|=" (hyphen-separated)
+    return qr/^$value(?:-|$)/ if $op eq '|';
   
     # "*=" (contains)
     return qr/$value/ if $op eq '*';
@@ -5914,7 +6192,7 @@ $fatpacked{"Mojo/DOM/CSS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
   An C<E> element whose C<foo> attribute value is exactly equal to any
   (ASCII-range) case-permutation of C<bar>. Note that this selector is
-  EXPERIMENTAL and might change without warning!
+  B<EXPERIMENTAL> and might change without warning!
   
     my $case_insensitive = $css->select('input[type="hidden" i]');
     my $case_insensitive = $css->select('input[type=hidden i]');
@@ -5954,6 +6232,13 @@ $fatpacked{"Mojo/DOM/CSS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
     my $contains = $css->select('input[name*="fo"]');
     my $contains = $css->select('input[name*=fo]');
+  
+  =head2 E[foo|="en"]
+  
+  An C<E> element whose C<foo> attribute has a hyphen-separated list of values
+  beginning (from the left) with C<en>.
+  
+    my $english = $css->select('link[hreflang|=en]');
   
   =head2 E:root
   
@@ -6039,6 +6324,20 @@ $fatpacked{"Mojo/DOM/CSS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
     my $empty = $css->select(':empty');
   
+  =head2 E:link
+  
+  An C<E> element being the source anchor of a hyperlink of which the target is
+  not yet visited (C<:link>) or already visited (C<:visited>). Note that
+  L<Mojo::DOM::CSS> is not stateful, therefore C<:link> and C<:visited> yield
+  exactly the same results.
+  
+    my $links = $css->select(':link');
+    my $links = $css->select(':visited');
+  
+  =head2 E:visited
+  
+  Alias for L</"E:link">.
+  
   =head2 E:checked
   
   A user interface element C<E> which is checked (for instance a radio-button or
@@ -6061,7 +6360,7 @@ $fatpacked{"Mojo/DOM/CSS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   =head2 E:not(s1, s2)
   
   An C<E> element that does not match either compound selector C<s1> or compound
-  selector C<s2>. Note that support for compound selectors is EXPERIMENTAL and
+  selector C<s2>. Note that support for compound selectors is B<EXPERIMENTAL> and
   might change without warning!
   
     my $others = $css->select('div p:not(:first-child, :last-child)');
@@ -6073,13 +6372,27 @@ $fatpacked{"Mojo/DOM/CSS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   =head2 E:matches(s1, s2)
   
   An C<E> element that matches compound selector C<s1> and/or compound selector
-  C<s2>. Note that this selector is EXPERIMENTAL and might change without warning!
+  C<s2>. Note that this selector is B<EXPERIMENTAL> and might change without
+  warning!
   
     my $headers = $css->select(':matches(section, article, aside, nav) h1');
   
   This selector is part of
   L<Selectors Level 4|http://dev.w3.org/csswg/selectors-4>, which is still a work
   in progress.
+  
+  =head2 A|E
+  
+  An C<E> element that belongs to the namespace alias C<A> from
+  L<CSS Namespaces Module Level 3|https://www.w3.org/TR/css-namespaces-3/>.
+  Key/value pairs passed to selector methods are used to declare namespace
+  aliases.
+  
+    my $elem = $css->select('lq|elem', lq => 'http://example.com/q-markup');
+  
+  Using an empty alias searches for an element that belongs to no namespace.
+  
+    my $div = $c->select('|div');
   
   =head2 E F
   
@@ -6137,24 +6450,31 @@ $fatpacked{"Mojo/DOM/CSS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   =head2 matches
   
     my $bool = $css->matches('head > title');
+    my $bool = $css->matches('svg|line', svg => 'http://www.w3.org/2000/svg');
   
-  Check if first node in L</"tree"> matches the CSS selector.
+  Check if first node in L</"tree"> matches the CSS selector. Trailing key/value
+  pairs can be used to declare xml namespace aliases.
   
   =head2 select
   
     my $results = $css->select('head > title');
+    my $results = $css->select('svg|line', svg => 'http://www.w3.org/2000/svg');
   
-  Run CSS selector against L</"tree">.
+  Run CSS selector against L</"tree">. Trailing key/value pairs can be used to
+  declare xml namespace aliases.
   
   =head2 select_one
   
     my $result = $css->select_one('head > title');
+    my $result =
+      $css->select_one('svg|line', svg => 'http://www.w3.org/2000/svg');
   
   Run CSS selector against L</"tree"> and stop as soon as the first node matched.
+  Trailing key/value pairs can be used to declare xml namespace aliases.
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_DOM_CSS
@@ -6163,8 +6483,11 @@ $fatpacked{"Mojo/DOM/HTML.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'M
   package Mojo::DOM::HTML;
   use Mojo::Base -base;
   
+  use Exporter 'import';
   use Mojo::Util qw(html_attr_unescape html_unescape xml_escape);
   use Scalar::Util 'weaken';
+  
+  our @EXPORT_OK = ('tag_to_html');
   
   has tree => sub { ['root'] };
   has 'xml';
@@ -6213,8 +6536,9 @@ $fatpacked{"Mojo/DOM/HTML.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'M
   
   # HTML elements that break paragraphs
   map { $END{$_} = 'p' } (
-    qw(address article aside blockquote dir div dl fieldset footer form h1 h2),
-    qw(h3 h4 h5 h6 header hr main menu nav ol p pre section table ul)
+    qw(address article aside blockquote details dialog div dl fieldset),
+    qw(figcaption figure footer form h1 h2 h3 h4 h5 h6 header hgroup hr main),
+    qw(menu nav ol p pre section table ul)
   );
   
   # HTML table elements with optional end tags
@@ -6259,7 +6583,7 @@ $fatpacked{"Mojo/DOM/HTML.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'M
   sub parse {
     my ($self, $html) = (shift, "$_[0]");
   
-    my $xml = $self->xml;
+    my $xml     = $self->xml;
     my $current = my $tree = ['root'];
     while ($html =~ /\G$TOKEN_RE/gcso) {
       my ($text, $doctype, $comment, $cdata, $pi, $tag, $runaway)
@@ -6327,6 +6651,10 @@ $fatpacked{"Mojo/DOM/HTML.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'M
   
   sub render { _render($_[0]->tree, $_[0]->xml) }
   
+  sub tag { shift->tree(['root', _tag(@_)]) }
+  
+  sub tag_to_html { _render(_tag(@_), undef) }
+  
   sub _end {
     my ($end, $xml, $current) = @_;
   
@@ -6355,12 +6683,43 @@ $fatpacked{"Mojo/DOM/HTML.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'M
   sub _render {
     my ($tree, $xml) = @_;
   
-    # Text (escaped)
+    # Tag
     my $type = $tree->[0];
+    if ($type eq 'tag') {
+  
+      # Start tag
+      my $tag    = $tree->[1];
+      my $result = "<$tag";
+  
+      # Attributes
+      for my $key (sort keys %{$tree->[2]}) {
+        my $value = $tree->[2]{$key};
+        $result .= $xml ? qq{ $key="$key"} : " $key" and next
+          unless defined $value;
+        $result .= qq{ $key="} . xml_escape($value) . '"';
+      }
+  
+      # No children
+      return $xml ? "$result />" : $EMPTY{$tag} ? "$result>" : "$result></$tag>"
+        unless $tree->[4];
+  
+      # Children
+      no warnings 'recursion';
+      $result .= '>' . join '', map { _render($_, $xml) } @$tree[4 .. $#$tree];
+  
+      # End tag
+      return "$result</$tag>";
+    }
+  
+    # Text (escaped)
     return xml_escape $tree->[1] if $type eq 'text';
   
     # Raw text
     return $tree->[1] if $type eq 'raw';
+  
+    # Root
+    return join '', map { _render($_, $xml) } @$tree[1 .. $#$tree]
+      if $type eq 'root';
   
     # DOCTYPE
     return '<!DOCTYPE' . $tree->[1] . '>' if $type eq 'doctype';
@@ -6374,31 +6733,8 @@ $fatpacked{"Mojo/DOM/HTML.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'M
     # Processing instruction
     return '<?' . $tree->[1] . '?>' if $type eq 'pi';
   
-    # Root
-    return join '', map { _render($_, $xml) } @$tree[1 .. $#$tree]
-      if $type eq 'root';
-  
-    # Start tag
-    my $tag    = $tree->[1];
-    my $result = "<$tag";
-  
-    # Attributes
-    for my $key (sort keys %{$tree->[2]}) {
-      my $value = $tree->[2]{$key};
-      $result .= $xml ? qq{ $key="$key"} : " $key" and next unless defined $value;
-      $result .= qq{ $key="} . xml_escape($value) . '"';
-    }
-  
-    # No children
-    return $xml ? "$result />" : $EMPTY{$tag} ? "$result>" : "$result></$tag>"
-      unless $tree->[4];
-  
-    # Children
-    no warnings 'recursion';
-    $result .= '>' . join '', map { _render($_, $xml) } @$tree[4 .. $#$tree];
-  
-    # End tag
-    return "$result</$tag>";
+    # Everything else
+    return '';
   }
   
   sub _start {
@@ -6426,6 +6762,21 @@ $fatpacked{"Mojo/DOM/HTML.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'M
     $$current = $new;
   }
   
+  sub _tag {
+    my $tree = ['tag', shift, undef, undef];
+  
+    # Content
+    push @$tree, ref $_[-1] eq 'CODE' ? ['raw', pop->()] : ['text', pop]
+      if @_ % 2;
+  
+    # Attributes
+    my $attrs = $tree->[2] = {@_};
+    return $tree unless exists $attrs->{data} && ref $attrs->{data} eq 'HASH';
+    my $data = delete $attrs->{data};
+    @$attrs{map { y/_/-/; lc "data-$_" } keys %$data} = values %$data;
+    return $tree;
+  }
+  
   1;
   
   =encoding utf8
@@ -6448,6 +6799,19 @@ $fatpacked{"Mojo/DOM/HTML.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'M
   L<Mojo::DOM::HTML> is the HTML/XML engine used by L<Mojo::DOM>, based on the
   L<HTML Living Standard|https://html.spec.whatwg.org> and the
   L<Extensible Markup Language (XML) 1.0|http://www.w3.org/TR/xml/>.
+  
+  =head1 FUNCTIONS
+  
+  L<Mojo::DOM::HTML> implements the following functions, which can be imported
+  individually.
+  
+  =head2 tag_to_html
+  
+    my $str = tag_to_html 'div', id => 'foo', 'safe content';
+  
+  Generate HTML/XML tag and render it right away. This is a significantly faster
+  alternative to L</"tag"> for template systems that have to generate a lot of
+  tags.
   
   =head1 ATTRIBUTES
   
@@ -6486,9 +6850,15 @@ $fatpacked{"Mojo/DOM/HTML.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'M
   
   Render DOM to HTML/XML.
   
+  =head2 tag
+  
+    $html = $html->tag('div', id => 'foo', 'safe content');
+  
+  Generate HTML/XML tag.
+  
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_DOM_HTML
@@ -6679,10 +7049,129 @@ $fatpacked{"Mojo/Date.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_DATE
+
+$fatpacked{"Mojo/DynamicMethods.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_DYNAMICMETHODS';
+  package Mojo::DynamicMethods;
+  use Mojo::Base -strict;
+  
+  use Hash::Util::FieldHash 'fieldhash';
+  use Mojo::Util 'monkey_patch';
+  
+  sub import {
+    my ($flag, $caller) = ($_[1] // '', caller);
+    return unless $flag eq '-dispatch';
+  
+    my $dyn_pkg    = "${caller}::_Dynamic";
+    my $caller_can = $caller->can('SUPER::can');
+    monkey_patch $dyn_pkg, 'can', sub {
+      my ($self, $method, @rest) = @_;
+  
+      # Delegate to our parent's "can" if there is one, without breaking if not
+      my $can = $self->$caller_can($method, @rest);
+      return undef unless $can;
+      no warnings 'once';
+      my $h = do { no strict 'refs'; *{"${dyn_pkg}::${method}"}{CODE} };
+      return $h && $h eq $can ? undef : $can;
+    };
+  
+    {
+      no strict 'refs';
+      unshift @{"${caller}::ISA"}, $dyn_pkg;
+    }
+  }
+  
+  sub register {
+    my ($target, $object, $name, $code) = @_;
+  
+    state %dyn_methods;
+    state $setup = do { fieldhash %dyn_methods; 1 };
+  
+    my $dyn_pkg = "${target}::_Dynamic";
+    monkey_patch($dyn_pkg, $name, $target->BUILD_DYNAMIC($name, \%dyn_methods))
+      unless do { no strict 'refs'; *{"${dyn_pkg}::${name}"}{CODE} };
+    $dyn_methods{$object}{$name} = $code;
+  }
+  
+  1;
+  
+  =encoding utf8
+  
+  =head1 NAME
+  
+  Mojo::DynamicMethods - Fast dynamic method dispatch
+  
+  =head1 SYNOPSIS
+  
+    package MyClass;
+    use Mojo::Base -base;
+  
+    use Mojo::DynamicMethods -dispatch;
+  
+    sub BUILD_DYNAMIC {
+      my ($class, $method, $dyn_methods) = @_;
+      return sub {...};
+    }
+  
+    sub add_helper {
+      my ($self, $name, $cb) = @_;
+      Mojo::DynamicMethods::register 'MyClass', $self, $name, $cb;
+    }
+  
+    package main;
+  
+    # Generate methods dynamically (and hide them from "$obj->can(...)")
+    my $obj = MyClass->new;
+    $obj->add_helper(foo => sub { warn 'Hello Helper!' });
+    $obj->foo;
+  
+  =head1 DESCRIPTION
+  
+  L<Mojo::DynamicMethods> provides dynamic method dispatch for per-object helper
+  methods without requiring use of C<AUTOLOAD>.
+  
+  To opt your class into dynamic dispatch simply pass the C<-dispatch> flag.
+  
+    use Mojo::DynamicMethods -dispatch;
+  
+  And then implement a C<BUILD_DYNAMIC> method in your class, making sure that the
+  key you use to lookup methods in C<$dyn_methods> is the same thing you pass as
+  C<$ref> to L</"register">.
+  
+    sub BUILD_DYNAMIC {
+      my ($class, $method, $dyn_methods) = @_;
+      return sub {
+        my ($self, @args) = @_;
+        my $dynamic = $dyn_methods->{$self}{$method};
+        return $self->$dynamic(@args) if $dynamic;
+        my $package = ref $self;
+        croak qq{Can't locate object method "$method" via package "$package"};
+      };
+    }
+  
+  Note that this module is B<EXPERIMENTAL> and might change without warning!
+  
+  =head1 FUNCTIONS
+  
+  L<Mojo::DynamicMethods> implements the following functions.
+  
+  =head2 register
+  
+    Mojo::DynamicMethods::register $class, $ref, $name, $cb;
+  
+  Registers the method C<$name> as eligible for dynamic dispatch for C<$class>,
+  and sets C<$cb> to be looked up for C<$name> by reference C<$ref> in a dynamic
+  method constructed by C<BUILD_DYNAMIC>.
+  
+  =head1 SEE ALSO
+  
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
+  
+  =cut
+MOJO_DYNAMICMETHODS
 
 $fatpacked{"Mojo/EventEmitter.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_EVENTEMITTER';
   package Mojo::EventEmitter;
@@ -6875,7 +7364,7 @@ $fatpacked{"Mojo/EventEmitter.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_EVENTEMITTER
@@ -6885,24 +7374,65 @@ $fatpacked{"Mojo/Exception.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   use Mojo::Base -base;
   use overload bool => sub {1}, '""' => sub { shift->to_string }, fallback => 1;
   
+  use Exporter 'import';
+  use Mojo::Util 'decode';
+  use Scalar::Util 'blessed';
+  
   has [qw(frames line lines_after lines_before)] => sub { [] };
-  has message => 'Exception!';
-  has 'verbose';
+  has message                                    => 'Exception!';
+  has verbose => sub { $ENV{MOJO_EXCEPTION_VERBOSE} };
+  
+  our @EXPORT_OK = qw(check raise);
+  
+  sub check {
+    my ($err, @spec) = @_ % 2 ? @_ : ($@, @_);
+  
+    # Finally (search backwards since it is usually at the end)
+    my $guard;
+    for (my $i = $#spec - 1; $i >= 0; $i -= 2) {
+      ($guard = Mojo::Exception::_Guard->new(finally => $spec[$i + 1])) and last
+        if $spec[$i] eq 'finally';
+    }
+  
+    return undef unless $err;
+  
+    my ($default, $handler);
+    my ($is_obj, $str) = (!!blessed($err), "$err");
+  CHECK: for (my $i = 0; $i < @spec; $i += 2) {
+      my ($checks, $cb) = @spec[$i, $i + 1];
+  
+      ($default = $cb) and next if $checks eq 'default';
+  
+      for my $c (ref $checks eq 'ARRAY' ? @$checks : $checks) {
+        my $is_re = !!ref $c;
+        ($handler = $cb) and last CHECK if $is_obj && !$is_re && $err->isa($c);
+        ($handler = $cb) and last CHECK if $is_re  && $str =~ $c;
+      }
+    }
+  
+    # Rethrow if no handler could be found
+    die $err unless $handler ||= $default;
+    $handler->($_) for $err;
+  
+    return 1;
+  }
   
   sub inspect {
     my ($self, @sources) = @_;
   
+    return $self if @{$self->line};
+  
     # Extract file and line from message
     my @files;
-    my $msg = $self->lines_before([])->line([])->lines_after([])->message;
-    while ($msg =~ /at\s+(.+?)\s+line\s+(\d+)/g) { unshift @files, [$1, $2] }
+    my $msg = $self->message;
+    unshift @files, [$1, $2] while $msg =~ /at\s+(.+?)\s+line\s+(\d+)/g;
   
     # Extract file and line from stack trace
     if (my $zero = $self->frames->[0]) { push @files, [$zero->[1], $zero->[2]] }
   
     # Search for context in files
     for my $file (@files) {
-      next unless -r $file->[0] && open my $handle, '<:utf8', $file->[0];
+      next unless -r $file->[0] && open my $handle, '<', $file->[0];
       $self->_context($file->[1], [[<$handle>]]);
       return $self;
     }
@@ -6913,23 +7443,51 @@ $fatpacked{"Mojo/Exception.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
     return $self;
   }
   
-  sub new { @_ > 1 ? shift->SUPER::new(message => shift) : shift->SUPER::new }
+  sub new {
+    defined $_[1] ? shift->SUPER::new(message => shift) : shift->SUPER::new;
+  }
+  
+  sub raise {
+    my ($class, $err) = @_ > 1 ? (@_) : (__PACKAGE__, shift);
+  
+    if (!$class->can('new')) {
+      die $@ unless eval "package $class; use Mojo::Base 'Mojo::Exception'; 1";
+    }
+    elsif (!$class->isa(__PACKAGE__)) {
+      die "$class is not a Mojo::Exception subclass";
+    }
+  
+    CORE::die $class->new($err)->trace;
+  }
   
   sub to_string {
     my $self = shift;
   
     my $str = $self->message;
+  
+    my $frames = $self->frames;
+    if ($str !~ /\n$/) {
+      $str .= @$frames ? " at $frames->[0][1] line $frames->[0][2].\n" : "\n";
+    }
     return $str unless $self->verbose;
   
-    $str .= "\n" unless $str =~ /\n$/;
-    $str .= $_->[0] . ': ' . $_->[1] . "\n" for @{$self->lines_before};
-    $str .= $self->line->[0] . ': ' . $self->line->[1] . "\n" if $self->line->[0];
-    $str .= $_->[0] . ': ' . $_->[1] . "\n" for @{$self->lines_after};
+    my $line = $self->line;
+    if (@$line) {
+      $str .= "Context:\n";
+      $str .= "  $_->[0]: $_->[1]\n" for @{$self->lines_before};
+      $str .= "  $line->[0]: $line->[1]\n";
+      $str .= "  $_->[0]: $_->[1]\n" for @{$self->lines_after};
+    }
+  
+    if (my $max = @$frames) {
+      $str .= "Traceback (most recent call first):\n";
+      $str .= qq{  File "$_->[1]", line $_->[2], in "$_->[0]"\n} for @$frames;
+    }
   
     return $str;
   }
   
-  sub throw { CORE::die shift->new(shift)->trace(2)->inspect }
+  sub throw { CORE::die shift->new(shift)->trace }
   
   sub trace {
     my ($self, $start) = (shift, shift // 1);
@@ -6940,6 +7498,7 @@ $fatpacked{"Mojo/Exception.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   
   sub _append {
     my ($stack, $line) = @_;
+    $line = decode('UTF-8', $line) // $line;
     chomp $line;
     push @$stack, $line;
   }
@@ -6968,32 +7527,128 @@ $fatpacked{"Mojo/Exception.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
     }
   }
   
+  package Mojo::Exception::_Guard;
+  use Mojo::Base -base;
+  
+  sub DESTROY { shift->{finally}->() }
+  
   1;
   
   =encoding utf8
   
   =head1 NAME
   
-  Mojo::Exception - Exceptions with context
+  Mojo::Exception - Exception base class
   
   =head1 SYNOPSIS
   
-    use Mojo::Exception;
+    # Create exception classes
+    package MyApp::X::Foo {
+      use Mojo::Base 'Mojo::Exception';
+    }
+    package MyApp::X::Bar {
+      use Mojo::Base 'Mojo::Exception';
+    }
   
-    # Throw exception and show stack trace
-    eval { Mojo::Exception->throw('Something went wrong!') };
-    say "$_->[1]:$_->[2]" for @{$@->frames};
-  
-    # Customize exception
+    # Throw exceptions and handle them gracefully
+    use Mojo::Exception 'check';
     eval {
-      my $e = Mojo::Exception->new('Died at test.pl line 3.');
-      die $e->trace(2)->inspect->verbose(1);
+      MyApp::X::Foo->throw('Something went wrong!');
     };
-    say $@;
+    check(
+      'MyApp::X::Foo' => sub { say "Foo: $_" },
+      'MyApp::X::Bar' => sub { say "Bar: $_" }
+    );
+  
+    # Generate exception classes on demand
+    use Mojo::Exception qw(check raise);
+    eval {
+      raise 'MyApp::X::Name', 'The name Minion is already taken';
+    };
+    check(
+      'MyApp::X::Name' => sub { say "Name error: $_" },
+      default          => sub { say "Error: $_" }
+    );
   
   =head1 DESCRIPTION
   
   L<Mojo::Exception> is a container for exceptions with context information.
+  
+  =head1 FUNCTIONS
+  
+  L<Mojo::Exception> implements the following functions, which can be imported
+  individually.
+  
+  =head2 check
+  
+    my $bool = check 'MyApp::X::Foo' => sub {...};
+    my $bool = check $err, 'MyApp::X::Foo' => sub {...};
+  
+  Process exceptions by dispatching them to handlers with one or more matching
+  conditions. Exceptions that could not be handled will be rethrown automatically.
+  By default C<$@> will be used as exception source, so C<check> needs to be
+  called right after C<eval>. Note that this function is B<EXPERIMENTAL> and might
+  change without warning!
+  
+    # Handle various types of exceptions
+    eval {
+      dangerous_code();
+    };
+    check(
+      'MyApp::X::Foo'     => sub { say "Foo: $_" },
+      qr/^Could not open/ => sub { say "Open error: $_" },
+      default             => sub { say "Something went wrong: $_" },
+      finally             => sub { say 'Dangerous code is done' }
+    );
+  
+  Matching conditions can be class names for ISA checks on exception objects, or
+  regular expressions to match string exceptions and stringified exception
+  objects. The matching exception will be the first argument passed to the
+  callback, and is also available as C<$_>.
+  
+    # Catch MyApp::X::Foo object or a specific string exception
+    eval {
+      dangerous_code();
+    };
+    check(
+      'MyApp::X::Foo'     => sub { say "Foo: $_" },
+      qr/^Could not open/ => sub { say "Open error: $_" }
+    );
+  
+  An array reference can be used to share the same handler with multiple
+  conditions, of which only one needs to match. And since exception handlers are
+  just callbacks, they can also throw their own exceptions.
+  
+    # Handle MyApp::X::Foo and MyApp::X::Bar the same
+    eval {
+      dangerous_code();
+    };
+    check(
+      ['MyApp::X::Foo', 'MyApp::X::Bar'] => sub { die "Foo/Bar: $_" }
+    );
+  
+  There are currently two keywords you can use to set special handlers. The
+  C<default> handler is used when no other handler matched. And the C<finally>
+  handler runs always, it does not affect normal handlers and even runs if the
+  exception was rethrown or if there was no exception to be handled at all.
+  
+    # Use "default" to catch everything
+    eval {
+      dangerous_code();
+    };
+    check(
+      default => sub { say "Error: $_" },
+      finally => sub { say 'Dangerous code is done' }
+    );
+  
+  =head2 raise
+  
+    raise 'Something went wrong!';
+    raise 'MyApp::X::Foo', 'Something went wrong!';
+  
+  Raise a L<Mojo::Exception>, if the class does not exist yet (classes are checked
+  for a C<new> method), one is created as a L<Mojo::Exception> subclass on demand.
+  Note that this function is B<EXPERIMENTAL> and might change without warning!
   
   =head1 ATTRIBUTES
   
@@ -7043,7 +7698,8 @@ $fatpacked{"Mojo/Exception.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
     my $bool = $e->verbose;
     $e       = $e->verbose($bool);
   
-  Enable context information for L</"to_string">.
+  Show more information with L</"to_string">, such as L</"frames">, defaults to
+  the value of the C<MOJO_EXCEPTION_VERBOSE> environment variable.
   
   =head1 METHODS
   
@@ -7069,10 +7725,9 @@ $fatpacked{"Mojo/Exception.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   
     my $str = $e->to_string;
   
-  Render exception.
-  
-    # Render exception with context
-    say $e->verbose(1)->to_string;
+  Render exception. Note that the output format may change as more features are
+  added, only the error message at the beginning is guaranteed not to be modified
+  to allow regex matching.
   
   =head2 throw
   
@@ -7081,7 +7736,7 @@ $fatpacked{"Mojo/Exception.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   Throw exception from the current execution context.
   
     # Longer version
-    die Mojo::Exception->new('Something went wrong!')->trace->inspect;
+    die Mojo::Exception->new('Something went wrong!')->trace;
   
   =head2 trace
   
@@ -7115,7 +7770,7 @@ $fatpacked{"Mojo/Exception.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_EXCEPTION
@@ -7138,6 +7793,7 @@ $fatpacked{"Mojo/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   use File::Path ();
   use File::Spec::Functions
     qw(abs2rel canonpath catfile file_name_is_absolute rel2abs splitdir);
+  use File::stat ();
   use File::Temp ();
   use IO::File   ();
   use Mojo::Collection;
@@ -7146,7 +7802,13 @@ $fatpacked{"Mojo/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   
   sub basename { File::Basename::basename ${shift()}, @_ }
   
-  sub child { $_[0]->new(@_) }
+  sub child { $_[0]->new(${shift()}, @_) }
+  
+  sub chmod {
+    my ($self, $mode) = @_;
+    chmod $mode, $$self or croak qq{Can't chmod file "$$self": $!};
+    return $self;
+  }
   
   sub copy_to {
     my ($self, $to) = @_;
@@ -7177,15 +7839,24 @@ $fatpacked{"Mojo/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     # This may break in the future, but is worth it for performance
     local $File::Find::skip_pattern = qr/^\./ unless $options->{hidden};
   
+    # The File::Find documentation lies, this is needed for CIFS
+    local $File::Find::dont_use_nlink = 1 if $options->{dont_use_nlink};
+  
     my %all;
-    my $wanted = {wanted => sub { $all{$File::Find::name}++ }, no_chdir => 1};
-    $wanted->{postprocess} = sub { delete $all{$File::Find::dir} }
-      unless $options->{dir};
-    find $wanted, $$self if -d $$self;
+    my $wanted = sub {
+      if ($options->{max_depth}) {
+        (my $rel = $File::Find::name) =~ s!^\Q$$self\E/?!!;
+        $File::Find::prune = 1 if splitdir($rel) >= $options->{max_depth};
+      }
+      $all{$File::Find::name}++ if $options->{dir} || !-d $File::Find::name;
+    };
+    find {wanted => $wanted, no_chdir => 1}, $$self if -d $$self;
     delete $all{$$self};
   
     return Mojo::Collection->new(map { $self->new(canonpath $_) } sort keys %all);
   }
+  
+  sub lstat { File::stat::lstat(${shift()}) }
   
   sub make_path {
     my $self = shift;
@@ -7201,6 +7872,7 @@ $fatpacked{"Mojo/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   
   sub new {
     my $class = shift;
+    croak 'Invalid path' if grep { !defined } @_;
     my $value = @_ == 1 ? $_[0] : @_ > 1 ? catfile @_ : canonpath getcwd;
     return bless \$value, ref $class || $class;
   }
@@ -7215,6 +7887,12 @@ $fatpacked{"Mojo/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   sub path { __PACKAGE__->new(@_) }
   
   sub realpath { $_[0]->new(Cwd::realpath ${$_[0]}) }
+  
+  sub remove {
+    my ($self, $mode) = @_;
+    unlink $$self or croak qq{Can't remove file "$$self": $!} if -e $$self;
+    return $self;
+  }
   
   sub remove_tree {
     my $self = shift;
@@ -7246,6 +7924,8 @@ $fatpacked{"Mojo/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     return $self;
   }
   
+  sub stat { File::stat::stat(${shift()}) }
+  
   sub tap { shift->Mojo::Base::tap(@_) }
   
   sub tempdir { __PACKAGE__->new(File::Temp->newdir(@_)) }
@@ -7259,6 +7939,13 @@ $fatpacked{"Mojo/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   sub to_rel { $_[0]->new(abs2rel(${$_[0]}, $_[1])) }
   
   sub to_string {"${$_[0]}"}
+  
+  sub touch {
+    my $self = shift;
+    $self->open('>') unless -e $$self;
+    utime undef, undef, $$self or croak qq{Can't touch file "$$self": $!};
+    return $self;
+  }
   
   sub with_roles { shift->Mojo::Base::with_roles(@_) }
   
@@ -7361,6 +8048,12 @@ $fatpacked{"Mojo/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     # "/home/sri/.vimrc" (on UNIX)
     path('/home')->child('sri', '.vimrc');
   
+  =head2 chmod
+  
+    $path = $path->chmod(0644);
+  
+  Change file permissions.
+  
   =head2 copy_to
   
     my $destination = $path->copy_to('/home/sri');
@@ -7443,13 +8136,37 @@ $fatpacked{"Mojo/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   
   Include directories.
   
+  =item dont_use_nlink
+  
+    dont_use_nlink => 1
+  
+  Force L<File::Find> to always stat directories.
+  
   =item hidden
   
     hidden => 1
   
   Include hidden files and directories.
   
+  =item max_depth
+  
+    max_depth => 3
+  
+  Maximum number of levels to descend when searching for files.
+  
   =back
+  
+  =head2 lstat
+  
+    my $stat = $path->lstat;
+  
+  Return a L<File::stat> object for the symlink.
+  
+    # Get symlink size
+    say path('/usr/sbin/sendmail')->lstat->size;
+  
+    # Get symlink modification time
+    say path('/usr/sbin/sendmail')->lstat->mtime;
   
   =head2 make_path
   
@@ -7500,6 +8217,12 @@ $fatpacked{"Mojo/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   
   Resolve the path with L<Cwd> and return the result as a L<Mojo::File> object.
   
+  =head2 remove
+  
+    $path = $path->remove;
+  
+  Delete file.
+  
   =head2 remove_tree
   
     $path = $path->remove_tree;
@@ -7532,6 +8255,18 @@ $fatpacked{"Mojo/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     $path = $path->spurt(@chunks_of_bytes);
   
   Write all data at once to the file.
+  
+  =head2 stat
+  
+    my $stat = $path->stat;
+  
+  Return a L<File::stat> object for the path.
+  
+    # Get file size
+    say path('/home/sri/.bashrc')->stat->size;
+  
+    # Get file modification time
+    say path('/home/sri/.bashrc')->stat->mtime;
   
   =head2 tap
   
@@ -7571,6 +8306,16 @@ $fatpacked{"Mojo/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   
   Stringify the path.
   
+  =head2 touch
+  
+    $path = $path->touch;
+  
+  Create file if it does not exist or change the modification and access time to
+  the current time.
+  
+    # Safely read file
+    say path('.bashrc')->touch->slurp;
+  
   =head2 with_roles
   
     my $new_class = Mojo::File->with_roles('Mojo::File::Role::One');
@@ -7603,7 +8348,7 @@ $fatpacked{"Mojo/File.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_FILE
@@ -7612,6 +8357,7 @@ $fatpacked{"Mojo/Headers.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   package Mojo::Headers;
   use Mojo::Base -base;
   
+  use Carp 'croak';
   use Mojo::Util 'monkey_patch';
   
   has max_line_size => sub { $ENV{MOJO_MAX_LINE_SIZE} || 8192 };
@@ -7627,8 +8373,8 @@ $fatpacked{"Mojo/Headers.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
     qw(Last-Modified Link Location Origin Proxy-Authenticate),
     qw(Proxy-Authorization Range Sec-WebSocket-Accept Sec-WebSocket-Extensions),
     qw(Sec-WebSocket-Key Sec-WebSocket-Protocol Sec-WebSocket-Version Server),
-    qw(Set-Cookie Status Strict-Transport-Security TE Trailer Transfer-Encoding),
-    qw(Upgrade User-Agent Vary WWW-Authenticate)
+    qw(Server-Timing Set-Cookie Status Strict-Transport-Security TE Trailer),
+    qw(Transfer-Encoding Upgrade User-Agent Vary WWW-Authenticate)
   );
   for my $header (keys %NAMES) {
     my $name = $header;
@@ -7641,8 +8387,16 @@ $fatpacked{"Mojo/Headers.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
     };
   }
   
+  # Hop-by-hop headers
+  my @HOP_BY_HOP = map {lc} (
+    qw(Connection Keep-Alive Proxy-Authenticate Proxy-Authorization TE Trailer),
+    qw(Transfer-Encoding Upgrade)
+  );
+  
   sub add {
     my ($self, $name) = (shift, shift);
+  
+    tr/\x0d\x0a// and croak "Invalid characters in $name header" for @_;
   
     # Make sure we have a normal case entry for name
     my $key = lc $name;
@@ -7658,7 +8412,22 @@ $fatpacked{"Mojo/Headers.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
     return $self->header($name => defined $old ? "$old, $value" : $value);
   }
   
-  sub clone { $_[0]->new->from_hash($_[0]->to_hash(1)) }
+  sub clone {
+    my $self = shift;
+  
+    my $clone = $self->new;
+    %{$clone->{names}} = %{$self->{names} // {}};
+    @{$clone->{headers}{$_}} = @{$self->{headers}{$_}}
+      for keys %{$self->{headers}};
+  
+    return $clone;
+  }
+  
+  sub dehop {
+    my $self = shift;
+    delete @{$self->{headers}}{@HOP_BY_HOP};
+    return $self;
+  }
   
   sub every_header { shift->{headers}{lc shift} || [] }
   
@@ -7994,6 +8763,13 @@ $fatpacked{"Mojo/Headers.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
   Get or replace current header value, shortcut for the C<Date> header.
   
+  =head2 dehop
+  
+    $heders = $headers->dehop;
+  
+  Remove hop-by-hop headers that should not be retransmitted. Note that this
+  method is B<EXPERIMENTAL> and might change without warning!
+  
   =head2 dnt
   
     my $dnt  = $headers->dnt;
@@ -8220,6 +8996,14 @@ $fatpacked{"Mojo/Headers.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
   Get or replace current header value, shortcut for the C<Server> header.
   
+  =head2 server_timing
+  
+    my $timing = $headers->server_timing;
+    $headers   = $headers->server_timing('app;desc=Mojolicious;dur=0.0001');
+  
+  Get or replace current header value, shortcut for the C<Server-Timing> header
+  from L<Server Timing|https://www.w3.org/TR/server-timing/>.
+  
   =head2 set_cookie
   
     my $cookie = $headers->set_cookie;
@@ -8314,7 +9098,7 @@ $fatpacked{"Mojo/Headers.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_HEADERS
@@ -8367,7 +9151,7 @@ $fatpacked{"Mojo/HelloWorld.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_HELLOWORLD
@@ -8389,15 +9173,12 @@ $fatpacked{"Mojo/Home.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     elsif ($class && (my $path = $INC{my $file = class_to_path $class})) {
       $home = Mojo::File->new($path)->to_array;
       splice @$home, (my @dummy = split('/', $file)) * -1;
-      pop @$home if @$home && $home->[-1] eq 'lib';
-      pop @$home if @$home && $home->[-1] eq 'blib';
+      @$home && $home->[-1] eq $_ && pop @$home for qw(lib blib);
     }
   
     $$self = Mojo::File->new(@$home)->to_abs->to_string if $home;
     return $self;
   }
-  
-  sub mojo_lib_dir { shift->new(__FILE__)->sibling('..') }
   
   sub rel_file { shift->child(split('/', shift)) }
   
@@ -8436,13 +9217,6 @@ $fatpacked{"Mojo/Home.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   Detect home directory from the value of the C<MOJO_HOME> environment variable or
   the location of the application class.
   
-  =head2 mojo_lib_dir
-  
-    my $path = $home->mojo_lib_dir;
-  
-  Path to C<lib> directory in which L<Mojolicious> is installed as a L<Mojo::Home>
-  object.
-  
   =head2 rel_file
   
     my $path = $home->rel_file('foo/bar.html');
@@ -8455,7 +9229,7 @@ $fatpacked{"Mojo/Home.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_HOME
@@ -8499,8 +9273,7 @@ $fatpacked{"Mojo/IOLoop.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
     return $self->{acceptors}{$acceptor} unless ref $acceptor;
   
     # Connect acceptor with reactor
-    $self->{acceptors}{my $id = $self->_id} = $acceptor;
-    weaken $acceptor->reactor($self->reactor)->{reactor};
+    $self->{acceptors}{my $id = $self->_id} = $acceptor->reactor($self->reactor);
   
     # Allow new acceptor to get picked up
     $self->_not_accepting->_maybe_accepting;
@@ -8511,9 +9284,9 @@ $fatpacked{"Mojo/IOLoop.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   sub client {
     my ($self, $cb) = (_instance(shift), pop);
   
-    my $id = $self->_id;
-    my $client = $self->{out}{$id}{client} = Mojo::IOLoop::Client->new;
-    weaken $client->reactor($self->reactor)->{reactor};
+    my $id     = $self->_id;
+    my $client = $self->{out}{$id}{client}
+      = Mojo::IOLoop::Client->new(reactor => $self->reactor);
   
     weaken $self;
     $client->on(
@@ -8531,8 +9304,7 @@ $fatpacked{"Mojo/IOLoop.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   }
   
   sub delay {
-    my $delay = Mojo::IOLoop::Delay->new;
-    weaken $delay->ioloop(_instance(shift))->{ioloop};
+    my $delay = Mojo::IOLoop::Delay->new->ioloop(_instance(shift));
     return @_ ? $delay->steps(@_) : $delay;
   }
   
@@ -8560,7 +9332,7 @@ $fatpacked{"Mojo/IOLoop.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   }
   
   sub reset {
-    my $self = _instance(shift);
+    my $self = _instance(shift)->emit('reset');
     delete @$self{qw(accepting acceptors events in out stop)};
     $self->reactor->reset;
     $self->stop;
@@ -8614,9 +9386,8 @@ $fatpacked{"Mojo/IOLoop.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   }
   
   sub subprocess {
-    my $subprocess = Mojo::IOLoop::Subprocess->new;
-    weaken $subprocess->ioloop(_instance(shift))->{ioloop};
-    return $subprocess->run(@_);
+    my $subprocess = Mojo::IOLoop::Subprocess->new(ioloop => _instance(shift));
+    return @_ ? $subprocess->run(@_) : $subprocess;
   }
   
   sub timer { shift->_timer(timer => @_) }
@@ -8655,15 +9426,15 @@ $fatpacked{"Mojo/IOLoop.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
     my ($self, $id) = @_;
   
     # Timer
-    return unless my $reactor = $self->reactor;
-    return if $reactor->remove($id);
+    return undef unless my $reactor = $self->reactor;
+    return undef if $reactor->remove($id);
   
     # Acceptor
     return $self->_not_accepting->_maybe_accepting
       if delete $self->{acceptors}{$id};
   
     # Connection
-    return unless delete $self->{in}{$id} || delete $self->{out}{$id};
+    return undef unless delete $self->{in}{$id} || delete $self->{out}{$id};
     return $self->stop if $self->{stop} && !$self->_in;
     $self->_maybe_accepting;
     warn "-- $id <<< $$ (@{[$self->_in]}:@{[$self->_out]})\n" if DEBUG;
@@ -8673,9 +9444,9 @@ $fatpacked{"Mojo/IOLoop.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
     my ($self, $stream, $id, $server) = @_;
   
     # Connect stream with reactor
-    $self->{$server ? 'in' : 'out'}{$id}{stream} = $stream;
+    $self->{$server ? 'in' : 'out'}{$id}{stream}
+      = $stream->reactor($self->reactor);
     warn "-- $id >>> $$ (@{[$self->_in]}:@{[$self->_out]})\n" if DEBUG;
-    weaken $stream->reactor($self->reactor)->{reactor};
     weaken $self;
     $stream->on(close => sub { $self && $self->_remove($id) });
     $stream->start;
@@ -8766,7 +9537,7 @@ $fatpacked{"Mojo/IOLoop.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   For better scalability (epoll, kqueue) and to provide non-blocking name
   resolution, SOCKS5 as well as TLS support, the optional modules L<EV> (4.0+),
   L<Net::DNS::Native> (0.15+), L<IO::Socket::Socks> (0.64+) and
-  L<IO::Socket::SSL> (1.94+) will be used automatically if possible. Individual
+  L<IO::Socket::SSL> (2.009+) will be used automatically if possible. Individual
   features can also be disabled with the C<MOJO_NO_NNR>, C<MOJO_NO_SOCKS> and
   C<MOJO_NO_TLS> environment variables.
   
@@ -8786,6 +9557,16 @@ $fatpacked{"Mojo/IOLoop.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
   Emitted when the event loop wants to shut down gracefully and is just waiting
   for all existing connections to be closed.
+  
+  =head2 reset
+  
+    $loop->on(reset => sub {
+      my $loop = shift;
+      ...
+    });
+  
+  Emitted when the event loop is reset, this usually happens after the process is
+  forked to clean up resources that cannot be shared.
   
   =head1 ATTRIBUTES
   
@@ -8853,14 +9634,9 @@ $fatpacked{"Mojo/IOLoop.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
     my $id = $loop->client(address => '127.0.0.1', port => 3000, sub {...});
     my $id = $loop->client({address => '127.0.0.1', port => 3000} => sub {...});
   
-  Open a TCP/IP or UNIX domain socket connection with L<Mojo::IOLoop::Client>,
-  takes the same arguments as L<Mojo::IOLoop::Client/"connect">.
-  
-    # Connect to 127.0.0.1 on port 3000
-    Mojo::IOLoop->client({port => 3000} => sub {
-      my ($loop, $err, $stream) = @_;
-      ...
-    });
+  Open a TCP/IP or UNIX domain socket connection with L<Mojo::IOLoop::Client> and
+  create a stream object (usually L<Mojo::IOLoop::Stream>), takes the same
+  arguments as L<Mojo::IOLoop::Client/"connect">.
   
   =head2 delay
   
@@ -8879,13 +9655,13 @@ $fatpacked{"Mojo/IOLoop.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
       $ua->get(@_ => sub {
         my ($ua, $tx) = @_;
         my $err = $tx->error;
-        $promise->resolve($tx) if !$err || $err->{code};
-        $promise->reject($err->{message});
+        if   (!$err || $err->{code}) { $promise->resolve($tx) }
+        else                         { $promise->reject($err->{message}) }
       });
       return $promise;
     }
-    my $mojo = get('http://mojolicious.org');
-    my $cpan = get('http://metacpan.org');
+    my $mojo = get('https://mojolicious.org');
+    my $cpan = get('https://metacpan.org');
     Mojo::Promise->race($mojo, $cpan)->then(sub { say shift->req->url })->wait;
   
     # Synchronize multiple non-blocking operations
@@ -8927,8 +9703,6 @@ $fatpacked{"Mojo/IOLoop.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
     my $bool = $loop->is_running;
   
   Check if event loop is running.
-  
-    exit unless Mojo::IOLoop->is_running;
   
   =head2 next_tick
   
@@ -8992,14 +9766,9 @@ $fatpacked{"Mojo/IOLoop.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
     my $id = $loop->server(port => 3000, sub {...});
     my $id = $loop->server({port => 3000} => sub {...});
   
-  Accept TCP/IP and UNIX domain socket connections with L<Mojo::IOLoop::Server>,
-  takes the same arguments as L<Mojo::IOLoop::Server/"listen">.
-  
-    # Listen on port 3000
-    Mojo::IOLoop->server({port => 3000} => sub {
-      my ($loop, $stream, $id) = @_;
-      ...
-    });
+  Accept TCP/IP and UNIX domain socket connections with L<Mojo::IOLoop::Server>
+  and create stream objects (usually L<Mojo::IOLoop::Stream>, takes the same
+  arguments as L<Mojo::IOLoop::Server/"listen">.
   
     # Listen on random port
     my $id = Mojo::IOLoop->server({address => '127.0.0.1'} => sub {
@@ -9071,6 +9840,7 @@ $fatpacked{"Mojo/IOLoop.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   =head2 subprocess
   
     my $subprocess = Mojo::IOLoop->subprocess(sub {...}, sub {...});
+    my $subprocess = $loop->subprocess;
     my $subprocess = $loop->subprocess(sub {...}, sub {...});
   
   Build L<Mojo::IOLoop::Subprocess> object to perform computationally expensive
@@ -9115,7 +9885,7 @@ $fatpacked{"Mojo/IOLoop.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_IOLOOP
@@ -9136,7 +9906,7 @@ $fatpacked{"Mojo/IOLoop/Client.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   use constant NNR => $ENV{MOJO_NO_NNR}
     ? 0
     : eval { require Net::DNS::Native; Net::DNS::Native->VERSION('0.15'); 1 };
-  my $NDN = NNR ? Net::DNS::Native->new(pool => 5, extra_thread => 1) : undef;
+  my $NDN;
   
   # SOCKS support requires IO::Socket::Socks
   use constant SOCKS => $ENV{MOJO_NO_SOCKS}
@@ -9145,7 +9915,7 @@ $fatpacked{"Mojo/IOLoop/Client.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   use constant READ  => SOCKS ? IO::Socket::Socks::SOCKS_WANT_READ()  : 0;
   use constant WRITE => SOCKS ? IO::Socket::Socks::SOCKS_WANT_WRITE() : 0;
   
-  has reactor => sub { Mojo::IOLoop->singleton->reactor };
+  has reactor => sub { Mojo::IOLoop->singleton->reactor }, weak => 1;
   
   sub DESTROY { shift->_cleanup }
   
@@ -9168,6 +9938,7 @@ $fatpacked{"Mojo/IOLoop/Client.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
       if !NNR || $args->{handle} || $args->{path};
   
     # Non-blocking name resolution
+    $NDN //= Net::DNS::Native->new(pool => 5, extra_thread => 1);
     my $handle = $self->{dns} = $NDN->getaddrinfo($address, _port($args),
       {protocol => IPPROTO_TCP, socktype => SOCK_STREAM});
     $reactor->io(
@@ -9186,8 +9957,8 @@ $fatpacked{"Mojo/IOLoop/Client.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   
   sub _cleanup {
     my $self = shift;
-    $NDN->timedout($self->{dns}) if $self->{dns};
-    return unless my $reactor = $self->reactor;
+    $NDN->timedout($self->{dns}) if $NDN && $self->{dns};
+    return $self unless my $reactor = $self->reactor;
     $self->{$_} && $reactor->remove(delete $self->{$_}) for qw(dns timer handle);
     return $self;
   }
@@ -9195,11 +9966,11 @@ $fatpacked{"Mojo/IOLoop/Client.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   sub _connect {
     my ($self, $args) = @_;
   
-    my $path = $args->{path};
+    my $path   = $args->{path};
     my $handle = $self->{handle} = $args->{handle};
   
     unless ($handle) {
-      my $class = $path ? 'IO::Socket::UNIX' : 'IO::Socket::IP';
+      my $class   = $path ? 'IO::Socket::UNIX' : 'IO::Socket::IP';
       my %options = (Blocking => 0);
   
       # UNIX domain socket
@@ -9291,7 +10062,7 @@ $fatpacked{"Mojo/IOLoop/Client.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     weaken $self;
     my $tls = Mojo::IOLoop::TLS->new($handle)->reactor($self->reactor);
     $tls->on(upgrade => sub { $self->_cleanup->emit(connect => pop) });
-    $tls->on(error => sub { $self->emit(error => pop) });
+    $tls->on(error   => sub { $self->emit(error => pop) });
     $tls->negotiate(%$args);
   }
   
@@ -9367,7 +10138,7 @@ $fatpacked{"Mojo/IOLoop/Client.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     $client     = $client->reactor(Mojo::Reactor::Poll->new);
   
   Low-level event reactor, defaults to the C<reactor> attribute value of the
-  global L<Mojo::IOLoop> singleton.
+  global L<Mojo::IOLoop> singleton. Note that this attribute is weakened.
   
   =head1 METHODS
   
@@ -9394,7 +10165,7 @@ $fatpacked{"Mojo/IOLoop/Client.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   
   Open a socket connection to a remote host. Note that non-blocking name
   resolution depends on L<Net::DNS::Native> (0.15+), SOCKS5 support on
-  L<IO::Socket::Socks> (0.64), and TLS support on L<IO::Socket::SSL> (1.94+).
+  L<IO::Socket::Socks> (0.64), and TLS support on L<IO::Socket::SSL> (2.009+).
   
   These options are currently available:
   
@@ -9471,7 +10242,7 @@ $fatpacked{"Mojo/IOLoop/Client.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   
     tls_ca => '/etc/tls/ca.crt'
   
-  Path to TLS certificate authority file. Also activates hostname verification.
+  Path to TLS certificate authority file.
   
   =item tls_cert
   
@@ -9485,11 +10256,23 @@ $fatpacked{"Mojo/IOLoop/Client.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   
   Path to the TLS key file.
   
+  =item tls_protocols
+  
+    tls_protocols => ['foo', 'bar']
+  
+  ALPN protocols to negotiate.
+  
+  =item tls_verify
+  
+    tls_verify => 0x00
+  
+  TLS verification mode.
+  
   =back
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_IOLOOP_CLIENT
@@ -9498,11 +10281,6 @@ $fatpacked{"Mojo/IOLoop/Delay.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
   package Mojo::IOLoop::Delay;
   use Mojo::Base 'Mojo::Promise';
   
-  # DEPRECATED!
-  use base 'Mojo::EventEmitter';
-  
-  use Mojo::Util 'deprecated';
-  
   sub begin {
     my ($self, $offset, $len) = @_;
     $self->{pending}++;
@@ -9510,31 +10288,12 @@ $fatpacked{"Mojo/IOLoop/Delay.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
     return sub { $self->_step($id, $offset // 1, $len, @_) };
   }
   
-  # DEPRECATED!
-  sub data {
-    deprecated 'Mojo::IOLoop::Delay::data is DEPRECATED';
-    Mojo::Util::_stash(data => @_);
-  }
-  
   sub pass { $_[0]->begin->(@_) }
-  
-  # DEPRECATED!
-  sub remaining {
-    deprecated 'Mojo::IOLoop::Delay::remaining is DEPRECATED';
-    my $self = shift;
-    return $self->{steps} ||= [] unless @_;
-    $self->{steps} = shift;
-    return $self;
-  }
   
   sub steps {
     my ($self, @steps) = @_;
     $self->{steps} = \@steps;
     $self->ioloop->next_tick($self->begin);
-  
-    # DEPRECATED!
-    $self->{deprecated} ||= $self->on(error => sub { });
-  
     return $self;
   }
   
@@ -9552,11 +10311,11 @@ $fatpacked{"Mojo/IOLoop/Delay.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
       unless (eval { $self->$cb(@args); 1 }) {
         my $err = $@;
         @{$self}{qw(fail steps)} = (1, []);
-        return $self->reject($err)->emit(error => $err);
+        return $self->reject($err);
       }
     }
   
-    ($self->{steps} = []) and return $self->resolve(@args)->emit(finish => @args)
+    ($self->{steps} = []) and return $self->resolve(@args)
       unless $self->{counter};
     $self->ioloop->next_tick($self->begin) unless $self->{pending};
     return $self;
@@ -9758,7 +10517,7 @@ $fatpacked{"Mojo/IOLoop/Delay.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_IOLOOP_DELAY
@@ -9770,12 +10529,13 @@ $fatpacked{"Mojo/IOLoop/Server.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   use Carp 'croak';
   use IO::Socket::IP;
   use IO::Socket::UNIX;
+  use Mojo::File 'path';
   use Mojo::IOLoop;
   use Mojo::IOLoop::TLS;
   use Scalar::Util 'weaken';
   use Socket qw(IPPROTO_TCP TCP_NODELAY);
   
-  has reactor => sub { Mojo::IOLoop->singleton->reactor };
+  has reactor => sub { Mojo::IOLoop->singleton->reactor }, weak => 1;
   
   sub DESTROY {
     my $self = shift;
@@ -9823,10 +10583,10 @@ $fatpacked{"Mojo/IOLoop/Server.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
       # UNIX domain socket
       my $reuse;
       if ($path) {
-        unlink $path if -S $path;
+        path($path)->remove if -S $path;
         $options{Local} = $path;
         $handle = $class->new(%options) or croak "Can't create listen socket: $!";
-        $reuse = $self->{reuse} = join ':', 'unix', $path, fileno $handle;
+        $reuse  = $self->{reuse} = join ':', 'unix', $path, fileno $handle;
       }
   
       # IP socket
@@ -9846,7 +10606,7 @@ $fatpacked{"Mojo/IOLoop/Server.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     $handle->blocking(0);
     @$self{qw(args handle)} = ($args, $handle);
   
-    croak 'IO::Socket::SSL 1.94+ required for TLS support'
+    croak 'IO::Socket::SSL 2.009+ required for TLS support'
       if !Mojo::IOLoop::TLS->can_tls && $args->{tls};
   }
   
@@ -9856,7 +10616,8 @@ $fatpacked{"Mojo/IOLoop/Server.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     my $self = shift;
     weaken $self;
     ++$self->{active}
-      and $self->reactor->io($self->{handle} => sub { $self->_accept });
+      and $self->reactor->io($self->{handle} => sub { $self->_accept })
+      ->watch($self->{handle}, 1, 0);
   }
   
   sub stop { delete($_[0]{active}) and $_[0]->reactor->remove($_[0]{handle}) }
@@ -9879,7 +10640,7 @@ $fatpacked{"Mojo/IOLoop/Server.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
       # Start TLS handshake
       my $tls = Mojo::IOLoop::TLS->new($handle)->reactor($self->reactor);
       $tls->on(upgrade => sub { $self->emit(accept => pop) });
-      $tls->on(error => sub { });
+      $tls->on(error   => sub { });
       $tls->negotiate(%$args, server => 1);
     }
   }
@@ -9940,7 +10701,7 @@ $fatpacked{"Mojo/IOLoop/Server.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     $server     = $server->reactor(Mojo::Reactor::Poll->new);
   
   Low-level event reactor, defaults to the C<reactor> attribute value of the
-  global L<Mojo::IOLoop> singleton.
+  global L<Mojo::IOLoop> singleton. Note that this attribute is weakened.
   
   =head1 METHODS
   
@@ -9971,7 +10732,7 @@ $fatpacked{"Mojo/IOLoop/Server.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     $server->listen({port => 3000});
   
   Create a new listen socket. Note that TLS support depends on L<IO::Socket::SSL>
-  (1.94+).
+  (2.009+).
   
   These options are currently available:
   
@@ -10053,12 +10814,17 @@ $fatpacked{"Mojo/IOLoop/Server.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   
   Path to the TLS key file, defaults to a built-in test key.
   
+  =item tls_protocols
+  
+    tls_protocols => ['foo', 'bar']
+  
+  ALPN protocols to negotiate.
+  
   =item tls_verify
   
     tls_verify => 0x00
   
-  TLS verification mode, defaults to C<0x03> if a certificate authority file has
-  been provided, or C<0x00>.
+  TLS verification mode.
   
   =item tls_version
   
@@ -10088,7 +10854,7 @@ $fatpacked{"Mojo/IOLoop/Server.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_IOLOOP_SERVER
@@ -10102,9 +10868,18 @@ $fatpacked{"Mojo/IOLoop/Stream.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   use Mojo::Util;
   use Scalar::Util 'weaken';
   
-  has reactor => sub { Mojo::IOLoop->singleton->reactor };
+  has high_water_mark => 1048576;
+  has reactor         => sub { Mojo::IOLoop->singleton->reactor }, weak => 1;
   
   sub DESTROY { Mojo::Util::_global_destruction() or shift->close }
+  
+  sub bytes_read { shift->{read} || 0 }
+  
+  sub bytes_waiting { length(shift->{buffer} // '') }
+  
+  sub bytes_written { shift->{written} || 0 }
+  
+  sub can_write { $_[0]{handle} && $_[0]->bytes_waiting < $_[0]->high_water_mark }
   
   sub close {
     my $self = shift;
@@ -10130,12 +10905,13 @@ $fatpacked{"Mojo/IOLoop/Stream.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     return !!length($self->{buffer}) || $self->has_subscribers('drain');
   }
   
-  sub new { shift->SUPER::new(handle => shift, buffer => '', timeout => 15) }
+  sub new { shift->SUPER::new(handle => shift, timeout => 15) }
   
   sub start {
     my $self = shift;
   
     # Resume
+    return unless $self->{handle};
     my $reactor = $self->reactor;
     return $reactor->watch($self->{handle}, 1, $self->is_writing)
       if delete $self->{paused};
@@ -10154,7 +10930,7 @@ $fatpacked{"Mojo/IOLoop/Stream.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   sub stop {
     my $self = shift;
     $self->reactor->watch($self->{handle}, 0, $self->is_writing)
-      unless $self->{paused}++;
+      if $self->{handle} && !$self->{paused}++;
   }
   
   sub timeout {
@@ -10166,8 +10942,8 @@ $fatpacked{"Mojo/IOLoop/Stream.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     $reactor->remove(delete $self->{timer}) if $self->{timer};
     return $self unless my $timeout = $self->{timeout} = shift;
     weaken $self;
-    $self->{timer}
-      = $reactor->timer($timeout => sub { $self->emit('timeout')->close });
+    $self->{timer} = $reactor->timer(
+      $timeout => sub { delete $self->{timer}; $self->emit('timeout')->close });
   
     return $self;
   }
@@ -10191,12 +10967,13 @@ $fatpacked{"Mojo/IOLoop/Stream.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   sub _read {
     my $self = shift;
   
-    my $read = $self->{handle}->sysread(my $buffer, 131072, 0);
-    return $read == 0 ? $self->close : $self->emit(read => $buffer)->_again
-      if defined $read;
+    if (defined(my $read = $self->{handle}->sysread(my $buffer, 131072, 0))) {
+      $self->{read} += $read;
+      return $read == 0 ? $self->close : $self->emit(read => $buffer)->_again;
+    }
   
     # Retry
-    return if $! == EAGAIN || $! == EINTR || $! == EWOULDBLOCK;
+    return undef if $! == EAGAIN || $! == EINTR || $! == EWOULDBLOCK;
   
     # Closed (maybe real error)
     $! == ECONNRESET ? $self->close : $self->emit(error => $!)->close;
@@ -10208,12 +10985,15 @@ $fatpacked{"Mojo/IOLoop/Stream.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     # Handle errors only when reading (to avoid timing problems)
     my $handle = $self->{handle};
     if (length $self->{buffer}) {
-      return unless defined(my $written = $handle->syswrite($self->{buffer}));
+      return undef
+        unless defined(my $written = $handle->syswrite($self->{buffer}));
+      $self->{written} += $written;
       $self->emit(write => substr($self->{buffer}, 0, $written, ''))->_again;
     }
   
-    $self->emit('drain') unless length $self->{buffer};
-    return if $self->is_writing;
+    # Clear the buffer to free the underlying SV* memory
+    undef $self->{buffer}, $self->emit('drain') unless length $self->{buffer};
+    return undef if $self->is_writing;
     return $self->close if $self->{graceful};
     $self->reactor->watch($handle, !$self->{paused}, 0) if $self->{handle};
   }
@@ -10320,18 +11100,54 @@ $fatpacked{"Mojo/IOLoop/Stream.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   
   L<Mojo::IOLoop::Stream> implements the following attributes.
   
+  =head2 high_water_mark
+  
+    my $size = $msg->high_water_mark;
+    $msg     = $msg->high_water_mark(1024);
+  
+  Maximum size of L</"write"> buffer in bytes before L</"can_write"> returns
+  false, defaults to C<1048576> (1MiB). Note that this attribute is
+  B<EXPERIMENTAL> and might change without warning!
+  
   =head2 reactor
   
     my $reactor = $stream->reactor;
     $stream     = $stream->reactor(Mojo::Reactor::Poll->new);
   
   Low-level event reactor, defaults to the C<reactor> attribute value of the
-  global L<Mojo::IOLoop> singleton.
+  global L<Mojo::IOLoop> singleton. Note that this attribute is weakened.
   
   =head1 METHODS
   
   L<Mojo::IOLoop::Stream> inherits all methods from L<Mojo::EventEmitter> and
   implements the following new ones.
+  
+  =head2 bytes_read
+  
+    my $num = $stream->bytes_read;
+  
+  Number of bytes received.
+  
+  =head2 bytes_waiting
+  
+    my $num = $stream->bytes_waiting;
+  
+  Number of bytes that have been enqueued with L</"write"> and are waiting to be
+  written. Note that this method is B<EXPERIMENTAL> and might change without
+  warning!
+  
+  =head2 bytes_written
+  
+    my $num = $stream->bytes_written;
+  
+  Number of bytes written.
+  
+  =head2 can_write
+  
+    my $bool = $stream->can_write;
+  
+  Returns true if calling L</"write"> is safe. Note that this method is
+  B<EXPERIMENTAL> and might change without warning!
   
   =head2 close
   
@@ -10403,21 +11219,20 @@ $fatpacked{"Mojo/IOLoop/Stream.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     $stream = $stream->write($bytes);
     $stream = $stream->write($bytes => sub {...});
   
-  Write data to stream, the optional drain callback will be executed once all data
-  has been written.
+  Enqueue data to be written to the stream as soon as possible, the optional drain
+  callback will be executed once all data has been written.
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_IOLOOP_STREAM
 
 $fatpacked{"Mojo/IOLoop/Subprocess.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_IOLOOP_SUBPROCESS';
   package Mojo::IOLoop::Subprocess;
-  use Mojo::Base -base;
+  use Mojo::Base 'Mojo::EventEmitter';
   
-  use Carp 'croak';
   use Config;
   use Mojo::IOLoop;
   use Mojo::IOLoop::Stream;
@@ -10425,45 +11240,72 @@ $fatpacked{"Mojo/IOLoop/Subprocess.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
   use Storable;
   
   has deserialize => sub { \&Storable::thaw };
-  has ioloop      => sub { Mojo::IOLoop->singleton };
+  has ioloop      => sub { Mojo::IOLoop->singleton }, weak => 1;
   has serialize   => sub { \&Storable::freeze };
   
   sub pid { shift->{pid} }
   
   sub run {
+    my ($self, @args) = @_;
+    $self->ioloop->next_tick(sub { $self->_start(@args) });
+    return $self;
+  }
+  
+  sub _start {
     my ($self, $child, $parent) = @_;
   
     # No fork emulation support
-    croak 'Subprocesses do not support fork emulation' if $Config{d_pseudofork};
+    return $self->$parent('Subprocesses do not support fork emulation')
+      if $Config{d_pseudofork};
   
     # Pipe for subprocess communication
-    pipe(my $reader, my $writer) or croak "Can't create pipe: $!";
-    $writer->autoflush(1);
+    return $self->$parent("Can't create pipe: $!")
+      unless pipe(my $reader, $self->{writer});
+    $self->{writer}->autoflush(1);
   
     # Child
-    croak "Can't fork: $!" unless defined(my $pid = $self->{pid} = fork);
+    return $self->$parent("Can't fork: $!")
+      unless defined(my $pid = $self->{pid} = fork);
     unless ($pid) {
       $self->ioloop->reset;
       my $results = eval { [$self->$child] } || [];
-      print $writer $self->serialize->([$@, @$results]);
+      print {$self->{writer}} '0-', $self->serialize->([$@, @$results]);
       POSIX::_exit(0);
     }
   
     # Parent
-    my $me     = $$;
+    my $me = $$;
+    close $self->{writer};
     my $stream = Mojo::IOLoop::Stream->new($reader)->timeout(0);
-    $self->ioloop->stream($stream);
+    $self->emit('spawn')->ioloop->stream($stream);
     my $buffer = '';
-    $stream->on(read => sub { $buffer .= pop });
+    $stream->on(
+      read => sub {
+        $buffer .= pop;
+        while (1) {
+          my ($len) = $buffer =~ /^([0-9]+)\-/;
+          last unless $len and length $buffer >= $len + $+[0];
+          my $snippet = substr $buffer, 0, $len + $+[0], '';
+          my $args    = $self->deserialize->(substr $snippet, $+[0]);
+          $self->emit(progress => @$args);
+        }
+      }
+    );
     $stream->on(
       close => sub {
         return unless $$ == $me;
         waitpid $pid, 0;
+        substr $buffer, 0, 2, '';
         my $results = eval { $self->deserialize->($buffer) } || [];
         $self->$parent(shift(@$results) // $@, @$results);
       }
     );
-    return $self;
+  }
+  
+  sub progress {
+    my ($self, @args) = @_;
+    my $serialized = $self->serialize->(\@args);
+    print {$self->{writer}} length($serialized), '-', $serialized;
   }
   
   1;
@@ -10501,6 +11343,36 @@ $fatpacked{"Mojo/IOLoop/Subprocess.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
   L<Mojo::IOLoop::Subprocess> allows L<Mojo::IOLoop> to perform computationally
   expensive operations in subprocesses, without blocking the event loop.
   
+  =head1 EVENTS
+  
+  L<Mojo::IOLoop::Subprocess> inherits all events from L<Mojo::EventEmitter> and
+  can emit the following new ones.
+  
+  =head2 progress
+  
+    $subprocess->on(progress => sub {
+      my ($subprocess, @data) = @_;
+      ...
+    });
+  
+  Emitted in the parent process when the subprocess calls the
+  L<progress|/"progress1"> method.
+  
+  =head2 spawn
+  
+    $subprocess->on(spawn => sub {
+      my $subprocess = shift;
+      ...
+    });
+  
+  Emitted in the parent process when the subprocess has been spawned.
+  
+    $subprocess->on(spawn => sub {
+      my $subprocess = shift;
+      my $pid = $subprocess->pid;
+      say "Performing work in process $pid";
+    });
+  
   =head1 ATTRIBUTES
   
   L<Mojo::IOLoop::Subprocess> implements the following attributes.
@@ -10524,6 +11396,7 @@ $fatpacked{"Mojo/IOLoop/Subprocess.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     $subprocess = $subprocess->ioloop(Mojo::IOLoop->new);
   
   Event loop object to control, defaults to the global L<Mojo::IOLoop> singleton.
+  Note that this attribute is weakened.
   
   =head2 serialize
   
@@ -10540,7 +11413,7 @@ $fatpacked{"Mojo/IOLoop/Subprocess.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
   
   =head1 METHODS
   
-  L<Mojo::IOLoop::Subprocess> inherits all methods from L<Mojo::Base> and
+  L<Mojo::IOLoop::Subprocess> inherits all methods from L<Mojo::EventEmitter> and
   implements the following new ones.
   
   =head2 pid
@@ -10548,6 +11421,35 @@ $fatpacked{"Mojo/IOLoop/Subprocess.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     my $pid = $subprocess->pid;
   
   Process id of the spawned subprocess if available.
+  
+  =head2 progress
+  
+    $subprocess->progress(@data);
+  
+  Send data serialized with L<Storable> to the parent process at any time during
+  the subprocess's execution. Must be called by the subprocess and emits the
+  L</"progress"> event in the parent process with the data.
+  
+    # Send progress information to the parent process
+    $subprocess->run(
+      sub {
+        my $subprocess = shift;
+        $subprocess->progress('0%');
+        sleep 5;
+        $subprocess->progress('50%');
+        sleep 5;
+        return 'Hello Mojo!';
+      },
+      sub {
+        my ($subprocess, $err, @results) = @_;
+        say 'Progress is 100%';
+        say $results[0];
+      }
+    );
+    $subprocess->on(progress => sub {
+      my ($subprocess, @data) = @_;
+      say "Progress is $data[0]";
+    });
   
   =head2 run
   
@@ -10561,7 +11463,7 @@ $fatpacked{"Mojo/IOLoop/Subprocess.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_IOLOOP_SUBPROCESS
@@ -10577,17 +11479,15 @@ $fatpacked{"Mojo/IOLoop/TLS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   # TLS support requires IO::Socket::SSL
   use constant TLS => $ENV{MOJO_NO_TLS}
     ? 0
-    : eval { require IO::Socket::SSL; IO::Socket::SSL->VERSION('1.94'); 1 };
-  use constant DEFAULT => eval { IO::Socket::SSL->VERSION('1.965') }
-    ? \undef
-    : '';
+    : eval { require IO::Socket::SSL; IO::Socket::SSL->VERSION('2.009'); 1 };
   use constant READ  => TLS ? IO::Socket::SSL::SSL_WANT_READ()  : 0;
   use constant WRITE => TLS ? IO::Socket::SSL::SSL_WANT_WRITE() : 0;
   
-  has reactor => sub { Mojo::IOLoop->singleton->reactor };
+  has reactor => sub { Mojo::IOLoop->singleton->reactor }, weak => 1;
   
-  # To regenerate the certificate run this command (18.04.2012)
-  # openssl req -new -x509 -keyout server.key -out server.crt -nodes -days 7300
+  # To regenerate the certificate run this command (28.06.2019)
+  # openssl req -x509 -newkey rsa:4096 -nodes -sha256 -out server.crt \
+  #   -keyout server.key -days 7300 -subj '/CN=localhost'
   my $CERT = path(__FILE__)->sibling('resources', 'server.crt')->to_string;
   my $KEY  = path(__FILE__)->sibling('resources', 'server.key')->to_string;
   
@@ -10598,21 +11498,20 @@ $fatpacked{"Mojo/IOLoop/TLS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   sub negotiate {
     my ($self, $args) = (shift, ref $_[0] ? $_[0] : {@_});
   
-    return $self->emit(error => 'IO::Socket::SSL 1.94+ required for TLS support')
+    return $self->emit(error => 'IO::Socket::SSL 2.009+ required for TLS support')
       unless TLS;
   
     my $handle = $self->{handle};
     return $self->emit(error => $IO::Socket::SSL::SSL_ERROR)
       unless IO::Socket::SSL->start_SSL($handle, %{$self->_expand($args)});
-    $self->reactor->io($handle
-        = $handle => sub { $self->_tls($handle, $args->{server}) });
+    $self->reactor->io($handle => sub { $self->_tls($handle, $args->{server}) });
   }
   
   sub new { shift->SUPER::new(handle => shift) }
   
   sub _cleanup {
     my $self = shift;
-    return unless my $reactor = $self->reactor;
+    return undef unless my $reactor = $self->reactor;
     $reactor->remove($self->{handle}) if $self->{handle};
     return $self;
   }
@@ -10622,28 +11521,26 @@ $fatpacked{"Mojo/IOLoop/TLS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
     weaken $self;
     my $tls = {
-      SSL_ca_file => $args->{tls_ca}
-        && -T $args->{tls_ca} ? $args->{tls_ca} : DEFAULT,
-      SSL_error_trap         => sub { $self->_cleanup->emit(error => $_[1]) },
-      SSL_honor_cipher_order => 1,
-      SSL_startHandshake     => 0
+      SSL_error_trap     => sub { $self->_cleanup->emit(error => $_[1]) },
+      SSL_startHandshake => 0
     };
+    $tls->{SSL_alpn_protocols} = $args->{tls_protocols} if $args->{tls_protocols};
+    $tls->{SSL_ca_file}        = $args->{tls_ca}
+      if $args->{tls_ca} && -T $args->{tls_ca};
     $tls->{SSL_cert_file}   = $args->{tls_cert}    if $args->{tls_cert};
     $tls->{SSL_cipher_list} = $args->{tls_ciphers} if $args->{tls_ciphers};
     $tls->{SSL_key_file}    = $args->{tls_key}     if $args->{tls_key};
     $tls->{SSL_server}      = $args->{server}      if $args->{server};
-    $tls->{SSL_verify_mode} = $args->{tls_verify}  if exists $args->{tls_verify};
+    $tls->{SSL_verify_mode} = $args->{tls_verify}  if defined $args->{tls_verify};
     $tls->{SSL_version}     = $args->{tls_version} if $args->{tls_version};
   
     if ($args->{server}) {
       $tls->{SSL_cert_file} ||= $CERT;
       $tls->{SSL_key_file}  ||= $KEY;
-      $tls->{SSL_verify_mode} //= $args->{tls_ca} ? 0x03 : 0x00;
     }
     else {
       $tls->{SSL_hostname}
         = IO::Socket::SSL->can_client_sni ? $args->{address} : '';
-      $tls->{SSL_verify_mode} //= $args->{tls_ca} ? 0x01 : 0x00;
       $tls->{SSL_verifycn_name} = $args->{address};
     }
   
@@ -10653,13 +11550,14 @@ $fatpacked{"Mojo/IOLoop/TLS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   sub _tls {
     my ($self, $handle, $server) = @_;
   
-    return $self->_cleanup->emit(upgrade => delete $self->{handle})
-      if $server ? $handle->accept_SSL : $handle->connect_SSL;
-  
     # Switch between reading and writing
-    my $err = $IO::Socket::SSL::SSL_ERROR;
-    if    ($err == READ)  { $self->reactor->watch($handle, 1, 0) }
-    elsif ($err == WRITE) { $self->reactor->watch($handle, 1, 1) }
+    if (!($server ? $handle->accept_SSL : $handle->connect_SSL)) {
+      my $err = $IO::Socket::SSL::SSL_ERROR;
+      if    ($err == READ)  { $self->reactor->watch($handle, 1, 0) }
+      elsif ($err == WRITE) { $self->reactor->watch($handle, 1, 1) }
+    }
+  
+    else { $self->_cleanup->emit(upgrade => delete $self->{handle}) }
   }
   
   1;
@@ -10726,7 +11624,7 @@ $fatpacked{"Mojo/IOLoop/TLS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
     $tls        = $tls->reactor(Mojo::Reactor::Poll->new);
   
   Low-level event reactor, defaults to the C<reactor> attribute value of the
-  global L<Mojo::IOLoop> singleton.
+  global L<Mojo::IOLoop> singleton. Note that this attribute is weakened.
   
   =head1 METHODS
   
@@ -10737,7 +11635,7 @@ $fatpacked{"Mojo/IOLoop/TLS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
     my $bool = Mojo::IOLoop::TLS->can_tls;
   
-  True if L<IO::Socket::SSL> 1.94+ is installed and TLS support enabled.
+  True if L<IO::Socket::SSL> 2.009+ is installed and TLS support enabled.
   
   =head2 negotiate
   
@@ -10760,8 +11658,7 @@ $fatpacked{"Mojo/IOLoop/TLS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
     tls_ca => '/etc/tls/ca.crt'
   
-  Path to TLS certificate authority file. Also activates hostname verification on
-  the client-side.
+  Path to TLS certificate authority file.
   
   =item tls_cert
   
@@ -10785,12 +11682,17 @@ $fatpacked{"Mojo/IOLoop/TLS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
   Path to the TLS key file, defaults to a built-in test key on the server-side.
   
+  =item tls_protocols
+  
+    tls_protocols => ['foo', 'bar']
+  
+  ALPN protocols to negotiate.
+  
   =item tls_verify
   
     tls_verify => 0x00
   
-  TLS verification mode, defaults to C<0x03> on the server-side and C<0x01> on the
-  client-side if a certificate authority file has been provided, or C<0x00>.
+  TLS verification mode.
   
   =item tls_version
   
@@ -10808,7 +11710,7 @@ $fatpacked{"Mojo/IOLoop/TLS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_IOLOOP_TLS
@@ -10820,33 +11722,49 @@ $fatpacked{"Mojo/JSON.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   use Carp 'croak';
   use Exporter 'import';
   use JSON::PP ();
-  use Mojo::Util;
+  use Mojo::Util qw(decode encode monkey_patch);
   use Scalar::Util 'blessed';
+  
+  # For better performance Cpanel::JSON::XS is required
+  use constant JSON_XS => $ENV{MOJO_NO_JSON_XS}
+    ? 0
+    : eval { require Cpanel::JSON::XS; Cpanel::JSON::XS->VERSION('4.09'); 1 };
   
   our @EXPORT_OK = qw(decode_json encode_json false from_json j to_json true);
   
-  # Escaped special character map (with u2028 and u2029)
+  # Escaped special character map
   my %ESCAPE = (
-    '"'     => '"',
-    '\\'    => '\\',
-    '/'     => '/',
-    'b'     => "\x08",
-    'f'     => "\x0c",
-    'n'     => "\x0a",
-    'r'     => "\x0d",
-    't'     => "\x09",
-    'u2028' => "\x{2028}",
-    'u2029' => "\x{2029}"
+    '"'  => '"',
+    '\\' => '\\',
+    '/'  => '/',
+    'b'  => "\x08",
+    'f'  => "\x0c",
+    'n'  => "\x0a",
+    'r'  => "\x0d",
+    't'  => "\x09"
   );
   my %REVERSE = map { $ESCAPE{$_} => "\\$_" } keys %ESCAPE;
   for (0x00 .. 0x1f) { $REVERSE{pack 'C', $_} //= sprintf '\u%.4X', $_ }
+  
+  # Replace pure-Perl fallbacks if Cpanel::JSON::XS is available
+  if (JSON_XS) {
+    my $BINARY = Cpanel::JSON::XS->new->utf8;
+    my $TEXT   = Cpanel::JSON::XS->new;
+    $_->canonical->allow_nonref->allow_unknown->allow_blessed->convert_blessed
+      ->stringify_infnan->escape_slash->allow_dupkeys
+      for $BINARY, $TEXT;
+    monkey_patch __PACKAGE__, 'encode_json', sub { $BINARY->encode($_[0]) };
+    monkey_patch __PACKAGE__, 'decode_json', sub { $BINARY->decode($_[0]) };
+    monkey_patch __PACKAGE__, 'to_json',     sub { $TEXT->encode($_[0]) };
+    monkey_patch __PACKAGE__, 'from_json',   sub { $TEXT->decode($_[0]) };
+  }
   
   sub decode_json {
     my $err = _decode(\my $value, shift);
     return defined $err ? croak $err : $value;
   }
   
-  sub encode_json { Mojo::Util::encode 'UTF-8', _encode_value(shift) }
+  sub encode_json { encode('UTF-8', _encode_value(shift)) }
   
   sub false () {JSON::PP::false}
   
@@ -10873,7 +11791,7 @@ $fatpacked{"Mojo/JSON.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
       die "Missing or empty input\n" unless length(local $_ = shift);
   
       # UTF-8
-      $_ = Mojo::Util::decode 'UTF-8', $_ unless shift;
+      $_ = decode('UTF-8', $_) unless shift;
       die "Input is not UTF-8 encoded\n" unless defined;
   
       # Value
@@ -11028,14 +11946,14 @@ $fatpacked{"Mojo/JSON.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   
   sub _encode_object {
     my $object = shift;
-    my @pairs = map { _encode_string($_) . ':' . _encode_value($object->{$_}) }
+    my @pairs  = map { _encode_string($_) . ':' . _encode_value($object->{$_}) }
       sort keys %$object;
     return '{' . join(',', @pairs) . '}';
   }
   
   sub _encode_string {
     my $str = shift;
-    $str =~ s!([\x00-\x1f\x{2028}\x{2029}\\"/])!$REVERSE{$1}!gs;
+    $str =~ s!([\x00-\x1f\\"/])!$REVERSE{$1}!gs;
     return "\"$str\"";
   }
   
@@ -11056,8 +11974,8 @@ $fatpacked{"Mojo/JSON.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
       return $value  ? 'true' : 'false' if $ref eq 'JSON::PP::Boolean';
   
       # Everything else
-      return _encode_string($value)
-        unless blessed $value && (my $sub = $value->can('TO_JSON'));
+      return 'null' unless blessed $value;
+      return _encode_string($value) unless my $sub = $value->can('TO_JSON');
       return _encode_value($value->$sub);
     }
   
@@ -11067,7 +11985,8 @@ $fatpacked{"Mojo/JSON.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     # Number
     no warnings 'numeric';
     return $value
-      if length((my $dummy = '') & $value)
+      if !utf8::is_utf8($value)
+      && length((my $dummy = '') & $value)
       && 0 + $value eq $value
       && $value * 0 == 0;
   
@@ -11109,7 +12028,7 @@ $fatpacked{"Mojo/JSON.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   =head1 DESCRIPTION
   
   L<Mojo::JSON> is a minimalistic and possibly the fastest pure-Perl
-  implementation of L<RFC 7159|http://tools.ietf.org/html/rfc7159>.
+  implementation of L<RFC 8259|http://tools.ietf.org/html/rfc8259>.
   
   It supports normal Perl data types like scalar, array reference, hash reference
   and will try to call the C<TO_JSON> method on blessed references, or stringify
@@ -11134,10 +12053,13 @@ $fatpacked{"Mojo/JSON.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     \1 -> true
     \0 -> false
   
-  The two Unicode whitespace characters C<u2028> and C<u2029> will always be
-  escaped to make JSONP easier, and the character C</> to prevent XSS attacks.
+  The character C</> will always be escaped to prevent XSS attacks.
   
-    "\x{2028}\x{2029}</script>" -> "\u2028\u2029<\/script>"
+    "</script>" -> "<\/script>"
+  
+  For better performance the optional module L<Cpanel::JSON::XS> (4.09+) will be
+  used automatically if possible. This can also be disabled with the
+  C<MOJO_NO_JSON_XS> environment variable.
   
   =head1 FUNCTIONS
   
@@ -11193,7 +12115,7 @@ $fatpacked{"Mojo/JSON.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_JSON
@@ -11204,16 +12126,16 @@ $fatpacked{"Mojo/JSON/Pointer.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
   
   has 'data';
   
-  sub contains { shift->_pointer(1, @_) }
-  sub get      { shift->_pointer(0, @_) }
+  sub contains { shift->_pointer(0, @_) }
+  sub get      { shift->_pointer(1, @_) }
   
   sub new { @_ > 1 ? shift->SUPER::new(data => shift) : shift->SUPER::new }
   
   sub _pointer {
-    my ($self, $contains, $pointer) = @_;
+    my ($self, $get, $pointer) = @_;
   
     my $data = $self->data;
-    return $contains ? 1 : $data unless $pointer =~ s!^/!!;
+    return length $pointer ? undef : $get ? $data : 1 unless $pointer =~ s!^/!!;
     for my $p (length $pointer ? (split '/', $pointer, -1) : ($pointer)) {
       $p =~ s!~1!/!g;
       $p =~ s/~0/~/g;
@@ -11230,7 +12152,7 @@ $fatpacked{"Mojo/JSON/Pointer.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
       else { return undef }
     }
   
-    return $contains ? 1 : $data;
+    return $get ? $data : 1;
   }
   
   1;
@@ -11318,7 +12240,7 @@ $fatpacked{"Mojo/JSON/Pointer.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_JSON_POINTER
@@ -11506,7 +12428,7 @@ $fatpacked{"Mojo/Loader.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_LOADER
@@ -11519,6 +12441,7 @@ $fatpacked{"Mojo/Log.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_L
   use Fcntl ':flock';
   use Mojo::File;
   use Mojo::Util 'encode';
+  use Time::HiRes 'time';
   
   has format => sub { shift->short ? \&_short : \&_default };
   has handle => sub {
@@ -11529,14 +12452,17 @@ $fatpacked{"Mojo/Log.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_L
     # File
     return Mojo::File->new($path)->open('>>');
   };
-  has history => sub { [] };
-  has level => 'debug';
+  has history          => sub { [] };
+  has level            => 'debug';
   has max_history_size => 10;
   has 'path';
   has short => sub { $ENV{MOJO_LOG_SHORT} };
   
   # Supported log levels
   my %LEVEL = (debug => 1, info => 2, warn => 3, error => 4, fatal => 5);
+  
+  # Systemd magic numbers
+  my %MAGIC = (debug => 7, info => 6, warn => 4, error => 3, fatal => 2);
   
   sub append {
     my ($self, $msg) = @_;
@@ -11547,12 +12473,12 @@ $fatpacked{"Mojo/Log.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_L
     flock $handle, LOCK_UN;
   }
   
-  sub debug { shift->_log(debug => @_) }
-  sub error { shift->_log(error => @_) }
-  sub fatal { shift->_log(fatal => @_) }
-  sub info  { shift->_log(info  => @_) }
+  sub debug { 1 >= $LEVEL{$_[0]->level} ? _log(@_, 'debug') : $_[0] }
+  sub error { 4 >= $LEVEL{$_[0]->level} ? _log(@_, 'error') : $_[0] }
+  sub fatal { 5 >= $LEVEL{$_[0]->level} ? _log(@_, 'fatal') : $_[0] }
+  sub info  { 2 >= $LEVEL{$_[0]->level} ? _log(@_, 'info')  : $_[0] }
   
-  sub is_level { $LEVEL{pop()} >= $LEVEL{$ENV{MOJO_LOG_LEVEL} || shift->level} }
+  sub is_level { $LEVEL{pop()} >= $LEVEL{shift->level} }
   
   sub new {
     my $self = shift->SUPER::new(@_);
@@ -11560,18 +12486,20 @@ $fatpacked{"Mojo/Log.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_L
     return $self;
   }
   
-  sub warn { shift->_log(warn => @_) }
+  sub warn { 3 >= $LEVEL{$_[0]->level} ? _log(@_, 'warn') : $_[0] }
   
   sub _default {
-    '[' . localtime(shift) . '] [' . shift() . '] ' . join "\n", @_, '';
+    my ($time, $level) = (shift, shift);
+    my ($s, $m, $h, $day, $month, $year) = localtime $time;
+    $time = sprintf '%04d-%02d-%02d %02d:%02d:%08.5f', $year + 1900, $month + 1,
+      $day, $h, $m, "$s." . ((split /\./, $time)[1] // 0);
+    return "[$time] [$$] [$level] " . join "\n", @_, '';
   }
   
-  sub _log { shift->emit('message', shift, @_) }
+  sub _log { shift->emit('message', pop, ref $_[0] eq 'CODE' ? $_[0]() : @_) }
   
   sub _message {
     my ($self, $level) = (shift, shift);
-  
-    return unless $self->is_level($level);
   
     my $max     = $self->max_history_size;
     my $history = $self->history;
@@ -11581,7 +12509,11 @@ $fatpacked{"Mojo/Log.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_L
     $self->append($self->format->(@$msg));
   }
   
-  sub _short { shift; '[' . shift() . '] ' . join "\n", @_, '' }
+  sub _short {
+    my ($time, $level) = (shift, shift);
+    my ($magic, $short) = ("<$MAGIC{$level}>", substr($level, 0, 1));
+    return "${magic}[$$] [$short] " . join("\n$magic", @_) . "\n";
+  }
   
   1;
   
@@ -11626,7 +12558,7 @@ $fatpacked{"Mojo/Log.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_L
   
   Emitted when a new message gets logged.
   
-    $log->unsubscribe('message')->on(message => sub {
+    $log->on(message => sub {
       my ($log, $level, @lines) = @_;
       say "$level: ", @lines;
     });
@@ -11644,7 +12576,7 @@ $fatpacked{"Mojo/Log.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_L
   
     $log->format(sub {
       my ($time, $level, @lines) = @_;
-      return "[Thu May 15 17:47:04 2014] [info] I ♥ Mojolicious\n";
+      return "[2018-11-08 14:20:13.77168] [28320] [info] I ♥ Mojolicious\n";
     });
   
   =head2 handle
@@ -11668,8 +12600,7 @@ $fatpacked{"Mojo/Log.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_L
     $log      = $log->level('debug');
   
   Active log level, defaults to C<debug>. Available log levels are C<debug>,
-  C<info>, C<warn>, C<error> and C<fatal>, in that order. Note that the
-  C<MOJO_LOG_LEVEL> environment variable can override this value.
+  C<info>, C<warn>, C<error> and C<fatal>, in that order.
   
   =head2 max_history_size
   
@@ -11700,7 +12631,7 @@ $fatpacked{"Mojo/Log.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_L
   
   =head2 append
   
-    $log->append("[Thu May 15 17:47:04 2014] [info] I ♥ Mojolicious\n");
+    $log->append("[2018-11-08 14:20:13.77168] [28320] [info] I ♥ Mojolicious\n");
   
   Append message to L</"handle">.
   
@@ -11708,6 +12639,7 @@ $fatpacked{"Mojo/Log.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_L
   
     $log = $log->debug('You screwed up, but that is ok');
     $log = $log->debug('All', 'cool');
+    $log = $log->debug(sub {...});
   
   Emit L</"message"> event and log C<debug> message.
   
@@ -11715,6 +12647,7 @@ $fatpacked{"Mojo/Log.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_L
   
     $log = $log->error('You really screwed up this time');
     $log = $log->error('Wow', 'seriously');
+    $log = $log->error(sub {...});
   
   Emit L</"message"> event and log C<error> message.
   
@@ -11722,6 +12655,7 @@ $fatpacked{"Mojo/Log.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_L
   
     $log = $log->fatal('Its over...');
     $log = $log->fatal('Bye', 'bye');
+    $log = $log->fatal(sub {...});
   
   Emit L</"message"> event and log C<fatal> message.
   
@@ -11729,6 +12663,7 @@ $fatpacked{"Mojo/Log.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_L
   
     $log = $log->info('You are bad, but you prolly know already');
     $log = $log->info('Ok', 'then');
+    $log = $log->info(sub {...});
   
   Emit L</"message"> event and log C<info> message.
   
@@ -11749,6 +12684,8 @@ $fatpacked{"Mojo/Log.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_L
   =head2 new
   
     my $log = Mojo::Log->new;
+    my $log = Mojo::Log->new(level => 'warn');
+    my $log = Mojo::Log->new({level => 'warn'});
   
   Construct a new L<Mojo::Log> object and subscribe to L</"message"> event with
   default logger.
@@ -11757,12 +12694,13 @@ $fatpacked{"Mojo/Log.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_L
   
     $log = $log->warn('Dont do that Dave...');
     $log = $log->warn('No', 'really');
+    $log = $log->warn(sub {...});
   
   Emit L</"message"> event and log C<warn> message.
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_LOG
@@ -11781,7 +12719,7 @@ $fatpacked{"Mojo/Message.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   use Mojo::Upload;
   use Mojo::Util 'decode';
   
-  has content => sub { Mojo::Content::Single->new };
+  has content          => sub { Mojo::Content::Single->new };
   has default_charset  => 'UTF-8';
   has max_line_size    => sub { $ENV{MOJO_MAX_LINE_SIZE} || 8192 };
   has max_message_size => sub { $ENV{MOJO_MAX_MESSAGE_SIZE} // 16777216 };
@@ -11949,6 +12887,14 @@ $fatpacked{"Mojo/Message.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
       if $self->content->is_limit_exceeded;
   
     return $self->emit('progress')->content->is_finished ? $self->finish : $self;
+  }
+  
+  sub save_to {
+    my ($self, $path) = @_;
+    my $content = $self->content;
+    croak 'Multipart content cannot be saved to files' if $content->is_multipart;
+    $content->asset->move_to($path);
+    return $self;
   }
   
   sub start_line_size {
@@ -12384,6 +13330,12 @@ $fatpacked{"Mojo/Message.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
   Parse message chunk.
   
+  =head2 save_to
+  
+    $msg = $msg->save_to('/some/path/index.html');
+  
+  Save message body to a file.
+  
   =head2 start_line_size
   
     my $size = $msg->start_line_size;
@@ -12429,7 +13381,7 @@ $fatpacked{"Mojo/Message.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_MESSAGE
@@ -12439,13 +13391,18 @@ $fatpacked{"Mojo/Message/Request.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   use Mojo::Base 'Mojo::Message';
   
   use Mojo::Cookie::Request;
-  use Mojo::Util qw(b64_encode b64_decode);
+  use Mojo::Util qw(b64_encode b64_decode sha1_sum);
   use Mojo::URL;
   
-  has env => sub { {} };
+  my ($SEED, $COUNTER) = ($$ . time . rand, int rand 0xffffff);
+  
+  has env    => sub { {} };
   has method => 'GET';
   has [qw(proxy reverse_proxy)];
-  has url => sub { Mojo::URL->new };
+  has request_id => sub {
+    substr sha1_sum($SEED . ($COUNTER = ($COUNTER + 1) % 0xffffff)), 0, 8;
+  };
+  has url       => sub { Mojo::URL->new };
   has via_proxy => 1;
   
   sub clone {
@@ -12491,8 +13448,11 @@ $fatpacked{"Mojo/Message/Request.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
     # We have a (hopefully) full request-line
     return !$self->error({message => 'Bad request start-line'})
       unless $1 =~ /^(\S+)\s+(\S+)\s+HTTP\/(\d\.\d)$/;
-    my $url = $self->method($1)->version($3)->url;
-    return !!($1 eq 'CONNECT' ? $url->host_port($2) : $url->parse($2));
+    my $url    = $self->method($1)->version($3)->url;
+    my $target = $2;
+    return !!$url->host_port($target) if $1 eq 'CONNECT';
+    return !!$url->parse($target)->fragment(undef) if $target =~ /^[^:\/?#]+:/;
+    return !!$url->path_query($target);
   }
   
   sub fix_headers {
@@ -12636,7 +13596,7 @@ $fatpacked{"Mojo/Message/Request.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
       # Remove SCRIPT_NAME prefix if necessary
       my $buffer = $path->to_string;
-      $value =~ s!^/|/$!!g;
+      $value  =~ s!^/|/$!!g;
       $buffer =~ s!^/?\Q$value\E/?!!;
       $buffer =~ s!^/!!;
       $path->parse($buffer);
@@ -12748,6 +13708,13 @@ $fatpacked{"Mojo/Message/Request.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
     $req     = $req->reverse_proxy($bool);
   
   Request has been performed through a reverse proxy.
+  
+  =head2 request_id
+  
+    my $id = $req->request_id;
+    $req   = $req->request_id('aee7d5d8');
+  
+  Request ID, defaults to a reasonably unique value.
   
   =head2 url
   
@@ -12890,7 +13857,7 @@ $fatpacked{"Mojo/Message/Request.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_MESSAGE_REQUEST
@@ -12905,12 +13872,12 @@ $fatpacked{"Mojo/Message/Response.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
   has [qw(code message)];
   has max_message_size => sub { $ENV{MOJO_MAX_MESSAGE_SIZE} // 2147483648 };
   
-  # Umarked codes are from RFC 7231
+  # Unmarked codes are from RFC 7231
   my %MESSAGES = (
     100 => 'Continue',
     101 => 'Switching Protocols',
     102 => 'Processing',                         # RFC 2518 (WebDAV)
-    103 => 'Early Hints',                        # RFC XXXX
+    103 => 'Early Hints',                        # RFC 8297
     200 => 'OK',
     201 => 'Created',
     202 => 'Accepted',
@@ -12948,10 +13915,11 @@ $fatpacked{"Mojo/Message/Response.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
     416 => 'Request Range Not Satisfiable',
     417 => 'Expectation Failed',
     418 => "I'm a teapot",                       # RFC 2324 :)
+    421 => 'Misdirected Request',                # RFC 7540
     422 => 'Unprocessable Entity',               # RFC 2518 (WebDAV)
     423 => 'Locked',                             # RFC 2518 (WebDAV)
     424 => 'Failed Dependency',                  # RFC 2518 (WebDAV)
-    425 => 'Unordered Colection',                # RFC 3648 (WebDAV)
+    425 => 'Unordered Collection',               # RFC 3648 (WebDAV)
     426 => 'Upgrade Required',                   # RFC 2817
     428 => 'Precondition Required',              # RFC 6585
     429 => 'Too Many Requests',                  # RFC 6585
@@ -12998,7 +13966,6 @@ $fatpacked{"Mojo/Message/Response.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
     my $content = $self->content;
     $content->skip_body(1) if $self->code($2)->is_empty;
     defined $content->$_ or $content->$_(1) for qw(auto_decompress auto_relax);
-    $content->expect_close(1) if $1 eq '1.0';
     return !!$self->version($1)->message($3);
   }
   
@@ -13009,6 +13976,9 @@ $fatpacked{"Mojo/Message/Response.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
     # Date
     my $headers = $self->headers;
     $headers->date(Mojo::Date->new->to_string) unless $headers->date;
+  
+    # RFC 7230 3.3.2
+    $headers->remove('Content-Length') if $self->is_empty;
   
     return $self;
   }
@@ -13213,7 +14183,7 @@ $fatpacked{"Mojo/Message/Response.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_MESSAGE_RESPONSE
@@ -13274,8 +14244,9 @@ $fatpacked{"Mojo/Parameters.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   sub merge {
     my $self = shift;
   
-    my @pairs = @_ == 1 ? @{shift->pairs} : @_;
-    while (my ($name, $value) = splice @pairs, 0, 2) {
+    my $merge = @_ == 1 ? shift->to_hash : {@_};
+    for my $name (sort keys %$merge) {
+      my $value = $merge->{$name};
       defined $value ? $self->param($name => $value) : $self->remove($name);
     }
   
@@ -13600,7 +14571,7 @@ $fatpacked{"Mojo/Parameters.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_PARAMETERS
@@ -13717,7 +14688,7 @@ $fatpacked{"Mojo/Path.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     my ($self, $name) = (shift, shift);
   
     unless ($self->{parts}) {
-      my $path = url_unescape delete($self->{path}) // '';
+      my $path    = url_unescape delete($self->{path}) // '';
       my $charset = $self->charset;
       $path = decode($charset, $path) // $path if $charset;
       $self->{leading_slash}  = $path =~ s!^/!!;
@@ -13955,7 +14926,7 @@ $fatpacked{"Mojo/Path.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_PATH
@@ -13965,15 +14936,15 @@ $fatpacked{"Mojo/Promise.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   use Mojo::Base -base;
   
   use Mojo::IOLoop;
-  use Scalar::Util qw(blessed weaken);
+  use Mojo::Util 'deprecated';
+  use Scalar::Util 'blessed';
   
-  has ioloop => sub { Mojo::IOLoop->singleton };
+  has ioloop => sub { Mojo::IOLoop->singleton }, weak => 1;
   
   sub all {
-    my ($class, @promises) = (ref $_[0] ? (undef, @_) : @_);
+    my ($class, @promises) = @_;
   
-    my $all = $promises[0]->_clone;
-  
+    my $all       = $promises[0]->clone;
     my $results   = [];
     my $remaining = scalar @promises;
     for my $i (0 .. $#promises) {
@@ -13991,10 +14962,12 @@ $fatpacked{"Mojo/Promise.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
   sub catch { shift->then(undef, shift) }
   
+  sub clone { $_[0]->new->ioloop($_[0]->ioloop) }
+  
   sub finally {
     my ($self, $finally) = @_;
   
-    my $new = $self->_clone;
+    my $new = $self->clone;
     push @{$self->{resolve}}, sub { _finally($new, $finally, 'resolve', @_) };
     push @{$self->{reject}},  sub { _finally($new, $finally, 'reject',  @_) };
   
@@ -14003,11 +14976,49 @@ $fatpacked{"Mojo/Promise.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
     return $new;
   }
   
+  sub map {
+    my ($class, $options) = (shift, ref $_[0] eq 'HASH' ? shift : {});
+    my ($cb, @items) = @_;
+  
+    my @start = map { $_->$cb } splice @items, 0,
+      $options->{concurrency} // @items;
+    my $proto = $class->resolve($start[0]);
+  
+    my (@trigger, @wait);
+    for my $item (@items) {
+      my $p = $proto->clone;
+      push @trigger, $p;
+      push @wait,    $p->then(sub { local $_ = $item; $_->$cb });
+    }
+  
+    my @all = map {
+      $proto->clone->resolve($_)->then(
+        sub { shift(@trigger)->resolve if @trigger; @_ },
+        sub { @trigger = (); $proto->clone->reject($_[0]) },
+      )
+    } (@start, @wait);
+  
+    return $class->all(@all);
+  }
+  
+  sub new {
+  
+    # DEPRECATED!
+    if (@_ > 2 or ref($_[1]) eq 'HASH') {
+      deprecated 'Mojo::Promise::new with attributes is DEPRECATED';
+      return shift->SUPER::new(@_);
+    }
+  
+    my $self = shift->SUPER::new;
+    shift->(sub { $self->resolve(@_) }, sub { $self->reject(@_) }) if @_;
+    return $self;
+  }
+  
   sub race {
-    my ($class, @promises) = (ref $_[0] ? (undef, @_) : @_);
-    my $race = $promises[0]->_clone;
-    $_->then(sub { $race->resolve(@_) }, sub { $race->reject(@_) }) for @promises;
-    return $race;
+    my ($class, @promises) = @_;
+    my $new = $promises[0]->clone;
+    $_->then(sub { $new->resolve(@_) }, sub { $new->reject(@_) }) for @promises;
+    return $new;
   }
   
   sub reject  { shift->_settle('reject',  @_) }
@@ -14016,7 +15027,7 @@ $fatpacked{"Mojo/Promise.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   sub then {
     my ($self, $resolve, $reject) = @_;
   
-    my $new = $self->_clone;
+    my $new = $self->clone;
     push @{$self->{resolve}}, sub { _then($new, $resolve, 'resolve', @_) };
     push @{$self->{reject}},  sub { _then($new, $reject,  'reject',  @_) };
   
@@ -14025,18 +15036,15 @@ $fatpacked{"Mojo/Promise.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
     return $new;
   }
   
+  sub timer   { shift->_timer('resolve', @_) }
+  sub timeout { shift->_timer('reject',  @_) }
+  
   sub wait {
     my $self = shift;
     return if (my $loop = $self->ioloop)->is_running;
-    $self->finally(sub { $loop->stop });
-    $loop->start;
-  }
-  
-  sub _clone {
-    my $self  = shift;
-    my $clone = $self->new;
-    weaken $clone->ioloop($self->ioloop)->{ioloop};
-    return $clone;
+    my $done;
+    $self->finally(sub { $done++; $loop->stop });
+    $loop->start until $done;
   }
   
   sub _defer {
@@ -14051,15 +15059,21 @@ $fatpacked{"Mojo/Promise.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
   sub _finally {
     my ($new, $finally, $method, @result) = @_;
-    my ($res) = eval { $finally->(@result) };
-    return $new->$method(@result)
-      unless $res && blessed $res && $res->can('then');
-    $res->then(sub { $new->$method(@result) }, sub { $new->$method(@result) });
+    return $new->reject($@) unless eval { $finally->(); 1 };
+    return $new->$method(@result);
   }
   
   sub _settle {
     my ($self, $status) = (shift, shift);
+    my $thenable = blessed $_[0] && $_[0]->can('then');
+    $self = $thenable ? $_[0]->clone : $self->new unless ref $self;
+  
+    $_[0]->then(sub { $self->resolve(@_); () }, sub { $self->reject(@_); () })
+      and return $self
+      if $thenable;
+  
     return $self if $self->{result};
+  
     @{$self}{qw(result status)} = ([@_], $status);
     $self->_defer;
     return $self;
@@ -14072,11 +15086,15 @@ $fatpacked{"Mojo/Promise.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
     my @res;
     return $new->reject($@) unless eval { @res = $cb->(@result); 1 };
+    return $new->resolve(@res);
+  }
   
-    return $new->resolve(@res)
-      unless @res == 1 && blessed $res[0] && $res[0]->can('then');
-  
-    $res[0]->then(sub { $new->resolve(@_); () }, sub { $new->reject(@_); () });
+  sub _timer {
+    my ($self, $method, $after, @result) = @_;
+    $self = $self->new unless ref $self;
+    $result[0] = 'Promise timeout' if $method eq 'reject' && !@result;
+    $self->ioloop->timer($after => sub { $self->$method(@result) });
+    return $self;
   }
   
   1;
@@ -14099,15 +15117,28 @@ $fatpacked{"Mojo/Promise.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
       $ua->get(@_ => sub {
         my ($ua, $tx) = @_;
         my $err = $tx->error;
-        $promise->resolve($tx) if !$err || $err->{code};
-        $promise->reject($err->{message});
+        if   (!$err || $err->{code}) { $promise->resolve($tx) }
+        else                         { $promise->reject($err->{message}) }
       });
       return $promise;
     }
   
+    # Perform non-blocking operations sequentially
+    get('https://mojolicious.org')->then(sub {
+      my $mojo = shift;
+      say $mojo->res->code;
+      return get('https://metacpan.org');
+    })->then(sub {
+      my $cpan = shift;
+      say $cpan->res->code;
+    })->catch(sub {
+      my $err = shift;
+      warn "Something went wrong: $err";
+    })->wait;
+  
     # Synchronize non-blocking operations (all)
-    my $mojo = get('http://mojolicious.org');
-    my $cpan = get('http://metacpan.org');
+    my $mojo = get('https://mojolicious.org');
+    my $cpan = get('https://metacpan.org');
     Mojo::Promise->all($mojo, $cpan)->then(sub {
       my ($mojo, $cpan) = @_;
       say $mojo->[0]->res->code;
@@ -14118,8 +15149,8 @@ $fatpacked{"Mojo/Promise.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
     })->wait;
   
     # Synchronize non-blocking operations (race)
-    my $mojo = get('http://mojolicious.org');
-    my $cpan = get('http://metacpan.org');
+    my $mojo = get('https://mojolicious.org');
+    my $cpan = get('https://metacpan.org');
     Mojo::Promise->race($mojo, $cpan)->then(sub {
       my $tx = shift;
       say $tx->req->url, ' won!';
@@ -14131,7 +15162,38 @@ $fatpacked{"Mojo/Promise.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   =head1 DESCRIPTION
   
   L<Mojo::Promise> is a Perl-ish implementation of
-  L<Promises/A+|https://promisesaplus.com>.
+  L<Promises/A+|https://promisesaplus.com> and a superset of
+  L<ES6 Promises|https://duckduckgo.com/?q=\mdn%20Promise>.
+  
+  =head1 STATES
+  
+  A promise is an object representing the eventual completion or failure of a
+  non-blocking operation. It allows non-blocking functions to return values, like
+  blocking functions. But instead of immediately returning the final value, the
+  non-blocking function returns a promise to supply the value at some point in the
+  future.
+  
+  A promise can be in one of three states:
+  
+  =over 2
+  
+  =item pending
+  
+  Initial state, neither fulfilled nor rejected.
+  
+  =item fulfilled
+  
+  Meaning that the operation completed successfully.
+  
+  =item rejected
+  
+  Meaning that the operation failed.
+  
+  =back
+  
+  A pending promise can either be fulfilled with a value or rejected with a
+  reason. When either happens, the associated handlers queued up by a promise's
+  L</"then"> method are called.
   
   =head1 ATTRIBUTES
   
@@ -14143,6 +15205,7 @@ $fatpacked{"Mojo/Promise.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
     $promise = $promise->ioloop(Mojo::IOLoop->new);
   
   Event loop object to control, defaults to the global L<Mojo::IOLoop> singleton.
+  Note that this attribute is weakened.
   
   =head1 METHODS
   
@@ -14152,14 +15215,12 @@ $fatpacked{"Mojo/Promise.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   =head2 all
   
     my $new = Mojo::Promise->all(@promises);
-    my $new = $promise->all(@promises);
   
   Returns a new L<Mojo::Promise> object that either fulfills when all of the
-  passed L<Mojo::Promise> objects (including the invocant) have fulfilled or
-  rejects as soon as one of them rejects. If the returned promise fulfills, it is
-  fulfilled with the values from the fulfilled promises in the same order as the
-  passed promises. This method can be useful for aggregating results of multiple
-  promises.
+  passed L<Mojo::Promise> objects have fulfilled or rejects as soon as one of them
+  rejects. If the returned promise fulfills, it is fulfilled with the values from
+  the fulfilled promises in the same order as the passed promises. This method can
+  be useful for aggregating results of multiple promises.
   
   =head2 catch
   
@@ -14186,6 +15247,13 @@ $fatpacked{"Mojo/Promise.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
       return "This is bad: $reason[0]";
     });
   
+  =head2 clone
+  
+    my $new = $promise->clone;
+  
+  Return a new L<Mojo::Promise> object cloned from this promise that is still
+  pending.
+  
   =head2 finally
   
     my $new = $promise->finally(sub {...});
@@ -14196,30 +15264,81 @@ $fatpacked{"Mojo/Promise.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
     # Do something on fulfillment and rejection
     $promise->finally(sub {
-      my @value_or_reason = @_;
       say "We are done!";
+    });
+  
+  =head2 map
+  
+    my $new = Mojo::Promise->map(sub {...}, @items);
+    my $new = Mojo::Promise->map({concurrency => 3}, sub {...}, @items);
+  
+  Apply a function that returns a L<Mojo::Promise> to each item in a list of
+  items while optionally limiting concurrency. Returns a L<Mojo::Promise> that
+  collects the results in the same manner as L</all>. If any item's promise is
+  rejected, any remaining items which have not yet been mapped will not be. Note
+  that this method is B<EXPERIMENTAL> and might change without warning!
+  
+    # Perform 3 requests at a time concurrently
+    Mojo::Promise->map({concurrency => 3}, sub { $ua->get_p($_) }, @urls)
+      ->then(sub{ say $_->[0]->res->dom->at('title')->text for @_ });
+  
+  These options are currently available:
+  
+  =over 2
+  
+  =item concurrency
+  
+    concurrency => 3
+  
+  The maximum number of items that are in progress at the same time.
+  
+  =back
+  
+  =head2 new
+  
+    my $promise = Mojo::Promise->new;
+    my $promise = Mojo::Promise->new(sub {...});
+  
+  Construct a new L<Mojo::Promise> object.
+  
+    # Wrap a continuation-passing style API
+    my $promise = Mojo::Promise->new(sub {
+      my ($resolve, $reject) = @_;
+      Mojo::IOLoop->timer(5 => sub {
+        if (int rand 2) { $resolve->('Lucky!') }
+        else            { $reject->('Unlucky!') }
+      });
     });
   
   =head2 race
   
     my $new = Mojo::Promise->race(@promises);
-    my $new = $promise->race(@promises);
   
   Returns a new L<Mojo::Promise> object that fulfills or rejects as soon as one of
-  the passed L<Mojo::Promise> objects (including the invocant) fulfills or
-  rejects, with the value or reason from that promise.
+  the passed L<Mojo::Promise> objects fulfills or rejects, with the value or
+  reason from that promise.
   
   =head2 reject
   
+    my $new  = Mojo::Promise->reject(@reason);
     $promise = $promise->reject(@reason);
   
-  Reject the promise with one or more rejection reasons.
+  Build rejected L<Mojo::Promise> object or reject the promise with one or more
+  rejection reasons.
+  
+    # Longer version
+    my $promise = Mojo::Promise->new->reject(@reason);
   
   =head2 resolve
   
+    my $new  = Mojo::Promise->resolve(@value);
     $promise = $promise->resolve(@value);
   
-  Resolve the promise with one or more fulfillment values.
+  Build resolved L<Mojo::Promise> object or resolve the promise with one or more
+  fulfillment values.
+  
+    # Longer version
+    my $promise = Mojo::Promise->new->resolve(@value);
   
   =head2 then
   
@@ -14231,26 +15350,52 @@ $fatpacked{"Mojo/Promise.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   L<Mojo::Promise> object resolving to the return value of the called handler.
   
     # Pass along the fulfillment value or rejection reason
-    $promise->then(sub {
-      my @value = @_;
-      say "The result is $value[0]";
-      return @value;
-    },
-    sub {
-      my @reason = @_;
-      warn "Something went wrong: $reason[0]";
-      return @reason;
-    });
+    $promise->then(
+      sub {
+        my @value = @_;
+        say "The result is $value[0]";
+        return @value;
+      },
+      sub {
+        my @reason = @_;
+        warn "Something went wrong: $reason[0]";
+        return @reason;
+      }
+    );
   
     # Change the fulfillment value or rejection reason
-    $promise->then(sub {
-      my @value = @_;
-      return "This is good: $value[0]";
-    },
-    sub {
-      my @reason = @_;
-      return "This is bad: $reason[0]";
-    });
+    $promise->then(
+      sub {
+        my @value = @_;
+        return "This is good: $value[0]";
+      },
+      sub {
+        my @reason = @_;
+        return "This is bad: $reason[0]";
+      }
+    );
+  
+  =head2 timer
+  
+    my $new  = Mojo::Promise->timer(5 => 'Success!');
+    $promise = $promise->timer(5 => 'Success!');
+    $promise = $promise->timer(5);
+  
+  Create a new L<Mojo::Promise> object with a timer or attach a timer to an
+  existing promise. The promise will be resolved after the given amount of time in
+  seconds with or without a value. Note that this method is B<EXPERIMENTAL> and
+  might change without warning!
+  
+  =head2 timeout
+  
+    my $new  = Mojo::Promise->timeout(5 => 'Timeout!');
+    $promise = $promise->timeout(5 => 'Timeout!');
+    $promise = $promise->timeout(5);
+  
+  Create a new L<Mojo::Promise> object with a timeout or attach a timeout to an
+  existing promise. The promise will be rejected after the given amount of time in
+  seconds with a reason, which defaults to C<Promise timeout>. Note that this
+  method is B<EXPERIMENTAL> and might change without warning!
   
   =head2 wait
   
@@ -14261,7 +15406,7 @@ $fatpacked{"Mojo/Promise.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_PROMISE
@@ -14280,7 +15425,7 @@ $fatpacked{"Mojo/Reactor.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
   sub detect {
     my $default = 'Mojo::Reactor::' . ($Config{d_pseudofork} ? 'Poll' : 'EV');
-    my $try = $ENV{MOJO_REACTOR} || $default;
+    my $try     = $ENV{MOJO_REACTOR} || $default;
     return $DETECTED{$try} ||= load_class($try) ? 'Mojo::Reactor::Poll' : $try;
   }
   
@@ -14475,7 +15620,7 @@ $fatpacked{"Mojo/Reactor.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MO
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_REACTOR
@@ -14521,7 +15666,7 @@ $fatpacked{"Mojo/Reactor/EV.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
     $mode |= EV::READ  if $read;
     $mode |= EV::WRITE if $write;
   
-    if ($mode == 0) { delete $io->{watcher} }
+    if    ($mode == 0)             { delete $io->{watcher} }
     elsif (my $w = $io->{watcher}) { $w->events($mode) }
     else {
       my $cb = sub {
@@ -14685,7 +15830,7 @@ $fatpacked{"Mojo/Reactor/EV.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_REACTOR_EV
@@ -14734,7 +15879,7 @@ $fatpacked{"Mojo/Reactor/Poll.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
       return $self->stop unless keys %{$self->{timers}} || keys %{$self->{io}};
   
       # Calculate ideal timeout based on timers and round up to next millisecond
-      my $min = min map { $_->{time} } values %{$self->{timers}};
+      my $min     = min map { $_->{time} } values %{$self->{timers}};
       my $timeout = defined $min ? $min - steady_time : 0.5;
       $timeout = $timeout <= 0 ? 0 : int($timeout * 1000) + 1;
   
@@ -14802,7 +15947,7 @@ $fatpacked{"Mojo/Reactor/Poll.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
     croak 'I/O watcher not active' unless my $io = $self->{io}{fileno $handle};
     $io->{mode} = 0;
     $io->{mode} |= POLLIN | POLLPRI if $read;
-    $io->{mode} |= POLLOUT if $write;
+    $io->{mode} |= POLLOUT          if $write;
   
     return $self;
   }
@@ -14996,7 +16141,7 @@ $fatpacked{"Mojo/Reactor/Poll.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_REACTOR_POLL
@@ -15034,12 +16179,12 @@ $fatpacked{"Mojo/Server.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
     # Fork and kill parent
     die "Can't fork: $!" unless defined(my $pid = fork);
     exit 0 if $pid;
-    POSIX::setsid or die "Can't start a new session: $!";
+    POSIX::setsid == -1 and die "Can't start a new session: $!";
   
     # Close filehandles
-    open STDIN,  '</dev/null';
-    open STDOUT, '>/dev/null';
-    open STDERR, '>&STDOUT';
+    open STDIN,  '<',  '/dev/null';
+    open STDOUT, '>',  '/dev/null';
+    open STDERR, '>&', STDOUT;
   }
   
   sub load_app {
@@ -15059,7 +16204,7 @@ $fatpacked{"Mojo/Server.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
         "package Mojo::Server::Sandbox::@{[md5_sum $path]}; require \$path";
       die qq{Can't load application from file "$path": $@} if $@;
       die qq{File "$path" did not return an application object.\n}
-        unless blessed $app && $app->isa('Mojo');
+        unless blessed $app && $app->can('handler');
       $self->app($app);
     };
     FindBin->again;
@@ -15119,7 +16264,7 @@ $fatpacked{"Mojo/Server.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
   Emitted when a request is ready and needs to be handled.
   
-    $server->unsubscribe('request')->on(request => sub {
+    $server->on(request => sub {
       my ($server, $tx) = @_;
       $tx->res->code(200);
       $tx->res->headers->content_type('text/plain');
@@ -15196,7 +16341,7 @@ $fatpacked{"Mojo/Server.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_SERVER
@@ -15334,7 +16479,7 @@ $fatpacked{"Mojo/Server/CGI.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_SERVER_CGI
@@ -15351,13 +16496,13 @@ $fatpacked{"Mojo/Server/Daemon.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   use Mojo::WebSocket 'server_handshake';
   use Scalar::Util 'weaken';
   
-  use constant DEBUG => $ENV{MOJO_DAEMON_DEBUG} || 0;
+  use constant DEBUG => $ENV{MOJO_SERVER_DEBUG} || 0;
   
   has acceptors => sub { [] };
   has [qw(backlog max_clients silent)];
   has inactivity_timeout => sub { $ENV{MOJO_INACTIVITY_TIMEOUT} // 15 };
-  has ioloop => sub { Mojo::IOLoop->singleton };
-  has listen => sub { [split ',', $ENV{MOJO_LISTEN} || 'http://*:3000'] };
+  has ioloop             => sub { Mojo::IOLoop->singleton };
+  has listen       => sub { [split ',', $ENV{MOJO_LISTEN} || 'http://*:3000'] };
   has max_requests => 100;
   
   sub DESTROY {
@@ -15367,16 +16512,14 @@ $fatpacked{"Mojo/Server/Daemon.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     $loop->remove($_) for keys %{$self->{connections} || {}}, @{$self->acceptors};
   }
   
-  sub ports {
-    [map { $_[0]->ioloop->acceptor($_)->port } @{$_[0]->acceptors}];
-  }
+  sub ports { [map { $_[0]->ioloop->acceptor($_)->port } @{$_[0]->acceptors}] }
   
   sub run {
     my $self = shift;
   
     # Make sure the event loop can be stopped in regular intervals
     my $loop = $self->ioloop;
-    my $int = $loop->recurring(1 => sub { });
+    my $int  = $loop->recurring(1 => sub { });
     local $SIG{INT} = local $SIG{TERM} = sub { $loop->stop };
     $self->start->ioloop->start;
     $loop->remove($int);
@@ -15395,7 +16538,10 @@ $fatpacked{"Mojo/Server/Daemon.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     }
   
     # Start listening
-    elsif (!@{$self->acceptors}) { $self->_listen($_) for @{$self->listen} }
+    elsif (!@{$self->acceptors}) {
+      $self->app->server($self);
+      $self->_listen($_) for @{$self->listen};
+    }
   
     return $self;
   }
@@ -15447,7 +16593,6 @@ $fatpacked{"Mojo/Server/Daemon.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
         # Last keep-alive request or corrupted connection
         my $c = $self->{connections}{$id};
         $tx->res->headers->connection('close')
-          and ++Mojo::IOLoop->stream($id)->{closed}
           if ($c->{requests} || 1) >= $self->max_requests || $req->error;
   
         $tx->on(resume => sub { $self->_write($id) });
@@ -15510,7 +16655,7 @@ $fatpacked{"Mojo/Server/Daemon.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     croak qq{Invalid listen location "$listen"}
       unless $proto eq 'http' || $proto eq 'https' || $proto eq 'http+unix';
   
-    my $query = $url->query;
+    my $query   = $url->query;
     my $options = {backlog => $self->backlog};
     $options->{$_} = $query->param($_) for qw(fd single_accept reuse);
     if ($proto eq 'http+unix') { $options->{path} = $url->host }
@@ -15539,7 +16684,7 @@ $fatpacked{"Mojo/Server/Daemon.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
         $stream->on(close => sub { $self && $self->_close($id) });
         $stream->on(error =>
             sub { $self && $self->app->log->error(pop) && $self->_close($id) });
-        $stream->on(read => sub { $self->_read($id => pop) });
+        $stream->on(read    => sub { $self->_read($id => pop) });
         $stream->on(timeout => sub { $self->_debug($id, 'Inactivity timeout') });
       }
     );
@@ -15555,7 +16700,7 @@ $fatpacked{"Mojo/Server/Daemon.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     my ($self, $id, $chunk) = @_;
   
     # Make sure we have a transaction
-    my $c = $self->{connections}{$id};
+    my $c  = $self->{connections}{$id};
     my $tx = $c->{tx} ||= $self->_build_tx($id, $c);
     warn term_escape "-- Server <<< Client (@{[_url($tx)]})\n$chunk\n" if DEBUG;
     $tx->server_read($chunk);
@@ -15623,7 +16768,7 @@ $fatpacked{"Mojo/Server/Daemon.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   For better scalability (epoll, kqueue) and to provide non-blocking name
   resolution, SOCKS5 as well as TLS support, the optional modules L<EV> (4.0+),
   L<Net::DNS::Native> (0.15+), L<IO::Socket::Socks> (0.64+) and
-  L<IO::Socket::SSL> (1.94+) will be used automatically if possible. Individual
+  L<IO::Socket::SSL> (2.009+) will be used automatically if possible. Individual
   features can also be disabled with the C<MOJO_NO_NNR>, C<MOJO_NO_SOCKS> and
   C<MOJO_NO_TLS> environment variables.
   
@@ -15748,7 +16893,7 @@ $fatpacked{"Mojo/Server/Daemon.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     ciphers=AES128-GCM-SHA256:RC4:HIGH:!MD5:!aNULL:!EDH
   
   TLS cipher specification string. For more information about the format see
-  L<https://www.openssl.org/docs/manmaster/apps/ciphers.html#CIPHER-STRINGS>.
+  L<https://www.openssl.org/docs/manmaster/man1/ciphers.html#CIPHER-STRINGS>.
   
   =item fd
   
@@ -15780,8 +16925,7 @@ $fatpacked{"Mojo/Server/Daemon.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   
     verify=0x00
   
-  TLS verification mode, defaults to C<0x03> if a certificate authority file has
-  been provided, or C<0x00>.
+  TLS verification mode.
   
   =item version
   
@@ -15856,14 +17000,14 @@ $fatpacked{"Mojo/Server/Daemon.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   
   =head1 DEBUGGING
   
-  You can set the C<MOJO_DAEMON_DEBUG> environment variable to get some advanced
+  You can set the C<MOJO_SERVER_DEBUG> environment variable to get some advanced
   diagnostics information printed to C<STDERR>.
   
-    MOJO_DAEMON_DEBUG=1
+    MOJO_SERVER_DEBUG=1
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_SERVER_DAEMON
@@ -15881,14 +17025,14 @@ $fatpacked{"Mojo/Server/Hypnotoad.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
   use Scalar::Util 'weaken';
   
   has prefork => sub { Mojo::Server::Prefork->new(listen => ['http://*:8080']) };
-  has upgrade_timeout => 60;
+  has upgrade_timeout => 180;
   
   sub configure {
     my ($self, $name) = @_;
   
     # Hypnotoad settings
     my $prefork = $self->prefork;
-    my $c = $prefork->app->config($name) || {};
+    my $c       = $prefork->app->config($name) || {};
     $self->upgrade_timeout($c->{upgrade_timeout}) if $c->{upgrade_timeout};
   
     # Pre-fork settings
@@ -15937,11 +17081,11 @@ $fatpacked{"Mojo/Server/Hypnotoad.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
     $self->_hot_deploy unless $ENV{HYPNOTOAD_PID};
   
     # Daemonize as early as possible (but not for restarts)
+    local $SIG{USR2} = sub { $self->{upgrade} ||= steady_time };
     $prefork->start;
     $prefork->daemonize if !$ENV{HYPNOTOAD_FOREGROUND} && $ENV{HYPNOTOAD_REV} < 3;
   
     # Start accepting connections
-    local $SIG{USR2} = sub { $self->{upgrade} ||= steady_time };
     $prefork->cleanup(1)->run;
   }
   
@@ -15963,7 +17107,7 @@ $fatpacked{"Mojo/Server/Hypnotoad.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
     return unless my $new = $self->{new};
   
     my $prefork = $self->prefork->cleanup(0);
-    unlink $prefork->pid_file;
+    path($prefork->pid_file)->remove;
     $prefork->ensure_pid_file($new);
   }
   
@@ -16055,7 +17199,7 @@ $fatpacked{"Mojo/Server/Hypnotoad.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
   For better scalability (epoll, kqueue) and to provide non-blocking name
   resolution, SOCKS5 as well as TLS support, the optional modules L<EV> (4.0+),
   L<Net::DNS::Native> (0.15+), L<IO::Socket::Socks> (0.64+) and
-  L<IO::Socket::SSL> (1.94+) will be used automatically if possible. Individual
+  L<IO::Socket::SSL> (2.009+) will be used automatically if possible. Individual
   features can also be disabled with the C<MOJO_NO_NNR>, C<MOJO_NO_SOCKS> and
   C<MOJO_NO_TLS> environment variables.
   
@@ -16223,7 +17367,7 @@ $fatpacked{"Mojo/Server/Hypnotoad.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
     upgrade_timeout => 45
   
   Maximum amount of time in seconds a zero downtime software upgrade may take
-  before getting canceled, defaults to C<60>.
+  before getting canceled, defaults to C<180>.
   
   =head2 workers
   
@@ -16254,7 +17398,7 @@ $fatpacked{"Mojo/Server/Hypnotoad.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
     $hypnotoad  = $hypnotoad->upgrade_timeout(15);
   
   Maximum amount of time in seconds a zero downtime software upgrade may take
-  before getting canceled, defaults to C<60>.
+  before getting canceled, defaults to C<180>.
   
   =head1 METHODS
   
@@ -16275,7 +17419,7 @@ $fatpacked{"Mojo/Server/Hypnotoad.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_SERVER_HYPNOTOAD
@@ -16347,7 +17491,7 @@ $fatpacked{"Mojo/Server/Morbo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
   
     # Worker
     my $daemon = $self->daemon;
-    $daemon->load_app($self->backend->watch->[0]);
+    $daemon->load_app($self->backend->watch->[0])->server($daemon);
     $daemon->ioloop->recurring(1 => sub { shift->stop unless kill 0, $manager });
     $daemon->run;
     exit 0;
@@ -16385,7 +17529,7 @@ $fatpacked{"Mojo/Server/Morbo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
   For better scalability (epoll, kqueue) and to provide non-blocking name
   resolution, SOCKS5 as well as TLS support, the optional modules L<EV> (4.0+),
   L<Net::DNS::Native> (0.15+), L<IO::Socket::Socks> (0.64+) and
-  L<IO::Socket::SSL> (1.94+) will be used automatically if possible. Individual
+  L<IO::Socket::SSL> (2.009+) will be used automatically if possible. Individual
   features can also be disabled with the C<MOJO_NO_NNR>, C<MOJO_NO_SOCKS> and
   C<MOJO_NO_TLS> environment variables.
   
@@ -16431,7 +17575,7 @@ $fatpacked{"Mojo/Server/Morbo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_SERVER_MORBO
@@ -16442,7 +17586,7 @@ $fatpacked{"Mojo/Server/Morbo/Backend.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
   
   use Carp 'croak';
   
-  has watch => sub { [qw(lib templates)] };
+  has watch         => sub { [qw(lib templates)] };
   has watch_timeout => sub { $ENV{MOJO_MORBO_TIMEOUT} || 1 };
   
   sub modified_files {
@@ -16509,7 +17653,7 @@ $fatpacked{"Mojo/Server/Morbo/Backend.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_SERVER_MORBO_BACKEND
@@ -16584,7 +17728,7 @@ $fatpacked{"Mojo/Server/Morbo/Backend/Poll.pm"} = '#line '.(1+__LINE__).' "'.__F
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_SERVER_MORBO_BACKEND_POLL
@@ -16626,7 +17770,7 @@ $fatpacked{"Mojo/Server/PSGI.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<
     my $self = shift;
   
     # Preload application and wrap it
-    $self->app;
+    $self->app->server($self);
     return sub { $self->run(@_) }
   }
   
@@ -16713,11 +17857,11 @@ $fatpacked{"Mojo/Server/PSGI.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<
   
     my $app = $psgi->to_psgi_app;
   
-  Turn L<Mojo> application into L<PSGI> application.
+  Turn L<Mojolicious> application into L<PSGI> application.
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_SERVER_PSGI
@@ -16742,19 +17886,18 @@ $fatpacked{"Mojo/Server/Prefork.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
   has spare              => 2;
   has workers            => 4;
   
-  sub DESTROY { unlink $_[0]->pid_file if $_[0]->cleanup }
+  sub DESTROY { path($_[0]->pid_file)->remove if $_[0]->cleanup }
   
   sub check_pid {
-    my $file = shift->pid_file;
-    return undef unless open my $handle, '<', $file;
-    my $pid = <$handle>;
+    return undef unless -r (my $file = path(shift->pid_file));
+    my $pid = $file->slurp;
     chomp $pid;
   
     # Running
     return $pid if $pid && kill 0, $pid;
   
     # Not running
-    unlink $file;
+    $file->remove;
     return undef;
   }
   
@@ -16762,15 +17905,14 @@ $fatpacked{"Mojo/Server/Prefork.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
     my ($self, $pid) = @_;
   
     # Check if PID file already exists
-    return if -e (my $file = $self->pid_file);
+    return if -e (my $file = path($self->pid_file));
   
     # Create PID file
-    $self->app->log->error(qq{Can't create process id file "$file": $!})
-      and die qq{Can't create process id file "$file": $!}
-      unless open my $handle, '>', $file;
+    if (my $err = eval { $file->spurt("$pid\n")->chmod(0644) } ? undef : $@) {
+      $self->app->log->error(qq{Can't create process id file "$file": $err})
+        and die qq{Can't create process id file "$file": $err};
+    }
     $self->app->log->info(qq{Creating process id file "$file"});
-    chmod 0644, $handle;
-    print $handle "$pid\n";
   }
   
   sub healthy {
@@ -16793,7 +17935,7 @@ $fatpacked{"Mojo/Server/Prefork.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
         $self->emit(reap => $pid)->_stopped($pid);
       }
     };
-    local $SIG{INT} = local $SIG{TERM} = sub { $self->_term };
+    local $SIG{INT}  = local $SIG{TERM} = sub { $self->_term };
     local $SIG{QUIT} = sub { $self->_term(1) };
     local $SIG{TTIN} = sub { $self->workers($self->workers + 1) };
     local $SIG{TTOU} = sub {
@@ -16819,7 +17961,7 @@ $fatpacked{"Mojo/Server/Prefork.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
     # Spawn more workers if necessary and check PID file
     if (!$self->{finished}) {
       my $graceful = grep { $_->{graceful} } values %{$self->{pool}};
-      my $spare = $self->spare;
+      my $spare    = $self->spare;
       $spare = $graceful ? $graceful > $spare ? $spare : $graceful : 0;
       my $need = ($self->workers - keys %{$self->{pool}}) + $spare;
       $self->_spawn while $need-- > 0;
@@ -17190,7 +18332,7 @@ $fatpacked{"Mojo/Server/Prefork.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_SERVER_PREFORK
@@ -17465,7 +18607,7 @@ $fatpacked{"Mojo/Template.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'M
     }
   
     # Wrap lines
-    my $num = () = $body =~ /\n/g;
+    my $num  = () = $body =~ /\n/g;
     my $code = $self->_line(1) . "\npackage @{[$self->namespace]};";
     $code .= "use Mojo::Base -strict; no warnings 'ambiguous';";
     $code .= "sub { my \$_O = ''; @{[$self->prepend]};{ $args { $body\n";
@@ -17611,11 +18753,16 @@ $fatpacked{"Mojo/Template.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'M
   error messages with context.
   
     Bareword "xx" not allowed while "strict subs" in use at template line 4.
-    2: </head>
-    3: <body>
-    4: % my $i = 2; xx
-    5: %= $i * 2
-    6: </body>
+    Context:
+      2: </head>
+      3: <body>
+      4: % my $i = 2; xx
+      5: %= $i * 2
+      6: </body>
+    Traceback (most recent call first):
+      File "template", line 4, in "Mojo::Template::Sandbox"
+      File "path/to/Mojo/Template.pm", line 123, in "Mojo::Template"
+      File "path/to/myapp.pl", line 123, in "main"
   
   =head1 ATTRIBUTES
   
@@ -17883,7 +19030,7 @@ $fatpacked{"Mojo/Template.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'M
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_TEMPLATE
@@ -17895,6 +19042,7 @@ $fatpacked{"Mojo/Transaction.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<
   use Carp 'croak';
   use Mojo::Message::Request;
   use Mojo::Message::Response;
+  use Mojo::Util 'deprecated';
   
   has [
     qw(kept_alive local_address local_port original_remote_address remote_port)];
@@ -17941,7 +19089,12 @@ $fatpacked{"Mojo/Transaction.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<
   sub server_read  { croak 'Method "server_read" not implemented by subclass' }
   sub server_write { croak 'Method "server_write" not implemented by subclass' }
   
-  sub success { $_[0]->error ? undef : $_[0]->res }
+  # DEPRECATED!
+  sub success {
+    deprecated 'Mojo::Transaction::success is DEPRECATED'
+      . ' in favor of Mojo::Transaction::result and Mojo::Transaction::error';
+    $_[0]->error ? undef : $_[0]->res;
+  }
   
   1;
   
@@ -18113,8 +19266,7 @@ $fatpacked{"Mojo/Transaction.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<
   
     my $err = $tx->error;
   
-  Get request or response error and return C<undef> if there is no error,
-  commonly used together with L</"success">.
+  Get request or response error and return C<undef> if there is no error.
   
     # Longer version
     my $err = $tx->req->error || $tx->res->error;
@@ -18174,25 +19326,9 @@ $fatpacked{"Mojo/Transaction.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<
   Write data server-side, used to implement web servers such as
   L<Mojo::Server::Daemon>. Meant to be overloaded in a subclass.
   
-  =head2 success
-  
-    my $res = $tx->success;
-  
-  Returns the L<Mojo::Message::Response> object from L</"res"> if transaction was
-  successful or C<undef> otherwise. Connection and parser errors have only a
-  message in L</"error">, C<400> and C<500> responses also a code.
-  
-    # Manual exception handling
-    if (my $res = $tx->success) { say $res->body }
-    else {
-      my $err = $tx->error;
-      die "$err->{code} response: $err->{message}" if $err->{code};
-      die "Connection error: $err->{message}";
-    }
-  
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_TRANSACTION
@@ -18209,12 +19345,12 @@ $fatpacked{"Mojo/Transaction/HTTP.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
     # Skip body for HEAD request
     my $res = $self->res;
     $res->content->skip_body(1) if uc $self->req->method eq 'HEAD';
-    return unless $res->parse($chunk)->is_finished;
+    return undef unless $res->parse($chunk)->is_finished;
   
     # Unexpected 1xx response
     return $self->completed if !$res->is_info || $res->headers->upgrade;
     $self->res($res->new)->emit(unexpected => $res);
-    return unless length(my $leftovers = $res->content->leftovers);
+    return undef unless length(my $leftovers = $res->content->leftovers);
     $self->client_read($leftovers);
   }
   
@@ -18267,16 +19403,14 @@ $fatpacked{"Mojo/Transaction/HTTP.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
   
     # Prepare body chunk
     my $buffer = $msg->get_body_chunk($self->{offset});
-    my $written = defined $buffer ? length $buffer : 0;
-    $self->{write} = $msg->content->is_dynamic ? 1 : ($self->{write} - $written);
-    $self->{offset} += $written;
+    $self->{offset} += defined $buffer ? length $buffer : 0;
   
     # Delayed
     $self->{writing} = 0 unless defined $buffer;
   
     # Finished
     $finish ? $self->completed : ($self->{writing} = 0)
-      if $self->{write} <= 0 || defined $buffer && !length $buffer;
+      if defined $buffer && !length $buffer;
   
     return $buffer // '';
   }
@@ -18285,7 +19419,7 @@ $fatpacked{"Mojo/Transaction/HTTP.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
     my ($self, $msg, $head) = @_;
   
     # Prepare header chunk
-    my $buffer = $msg->get_header_chunk($self->{offset});
+    my $buffer  = $msg->get_header_chunk($self->{offset});
     my $written = defined $buffer ? length $buffer : 0;
     $self->{write} -= $written;
     $self->{offset} += $written;
@@ -18295,10 +19429,7 @@ $fatpacked{"Mojo/Transaction/HTTP.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
       @$self{qw(http_state offset)} = ('body', 0);
   
       # Response without body
-      if ($head && $self->is_empty) { $self->completed->{http_state} = 'empty' }
-  
-      # Body
-      else { $self->{write} = $msg->content->is_dynamic ? 1 : $msg->body_size }
+      $self->completed->{http_state} = 'empty' if $head && $self->is_empty;
     }
   
     return $buffer;
@@ -18308,7 +19439,7 @@ $fatpacked{"Mojo/Transaction/HTTP.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
     my ($self, $msg) = @_;
   
     # Prepare start-line chunk
-    my $buffer = $msg->get_start_line_chunk($self->{offset});
+    my $buffer  = $msg->get_start_line_chunk($self->{offset});
     my $written = defined $buffer ? length $buffer : 0;
     $self->{write} -= $written;
     $self->{offset} += $written;
@@ -18504,7 +19635,7 @@ $fatpacked{"Mojo/Transaction/HTTP.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_TRANSACTION_HTTP
@@ -18563,7 +19694,7 @@ $fatpacked{"Mojo/Transaction/WebSocket.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
   sub finish {
     my $self = shift;
   
-    my $close = $self->{close} = [@_];
+    my $close   = $self->{close} = [@_];
     my $payload = $close->[0] ? pack('n', $close->[0]) : '';
     $payload .= encode 'UTF-8', $close->[1] if defined $close->[1];
     $close->[0] //= 1005;
@@ -18586,7 +19717,7 @@ $fatpacked{"Mojo/Transaction/WebSocket.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
     # Ping/Pong
     my $op = $frame->[4];
     return $self->send([1, 0, 0, 0, WS_PONG, $frame->[5]]) if $op == WS_PING;
-    return if $op == WS_PONG;
+    return undef if $op == WS_PONG;
   
     # Close
     if ($op == WS_CLOSE) {
@@ -18596,17 +19727,18 @@ $fatpacked{"Mojo/Transaction/WebSocket.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
     }
   
     # Append chunk and check message size
-    $self->{op} = $op unless exists $self->{op};
+    @{$self}{qw(op pmc)} = ($op, $self->compressed && $frame->[1])
+      unless exists $self->{op};
     $self->{message} .= $frame->[5];
     my $max = $self->max_websocket_size;
     return $self->finish(1009) if length $self->{message} > $max;
   
     # No FIN bit (Continuation)
-    return unless $frame->[0];
+    return undef unless $frame->[0];
   
     # "permessage-deflate" extension (handshake and RSV1)
     my $msg = delete $self->{message};
-    if ($self->compressed && $frame->[1]) {
+    if ($self->compressed && $self->{pmc}) {
       my $inflate = $self->{inflate} ||= Compress::Raw::Zlib::Inflate->new(
         Bufsize     => $max,
         LimitOutput => 1,
@@ -19027,7 +20159,7 @@ $fatpacked{"Mojo/Transaction/WebSocket.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_TRANSACTION_WEBSOCKET
@@ -19122,7 +20254,13 @@ $fatpacked{"Mojo/URL.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_U
   }
   
   sub path_query {
-    my $self  = shift;
+    my ($self, $pq) = @_;
+  
+    if (defined $pq) {
+      return $self unless $pq =~ /^([^?#]*)(?:\?([^#]*))?/;
+      return defined $2 ? $self->path($1)->query($2) : $self->path($1);
+    }
+  
     my $query = $self->query->to_string;
     return $self->path->to_string . (length $query ? "?$query" : '');
   }
@@ -19139,11 +20277,11 @@ $fatpacked{"Mojo/URL.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_U
     # Replace with list
     if (@_ > 1) { $q->pairs([])->parse(@_) }
   
-    # Merge with array
-    elsif (ref $_[0] eq 'ARRAY') { $q->merge(@{$_[0]}) }
+    # Merge with hash
+    elsif (ref $_[0] eq 'HASH') { $q->merge(%{$_[0]}) }
   
-    # Append hash
-    elsif (ref $_[0] eq 'HASH') { $q->append(%{$_[0]}) }
+    # Append array
+    elsif (ref $_[0] eq 'ARRAY') { $q->append(@{$_[0]}) }
   
     # New parameters
     else { $self->{query} = ref $_[0] ? $_[0] : $q->parse($_[0]) }
@@ -19434,6 +20572,7 @@ $fatpacked{"Mojo/URL.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_U
   =head2 path_query
   
     my $path_query = $url->path_query;
+    $url           = $url->path_query('/foo/bar?a=1&b=2');
   
   Normalized version of L</"path"> and L</"query">.
   
@@ -19455,15 +20594,15 @@ $fatpacked{"Mojo/URL.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_U
   =head2 query
   
     my $query = $url->query;
-    $url      = $url->query([merge => 'with']);
-    $url      = $url->query({append => 'to'});
+    $url      = $url->query({merge => 'to'});
+    $url      = $url->query([append => 'with']);
     $url      = $url->query(replace => 'with');
     $url      = $url->query('a=1&b=2');
     $url      = $url->query(Mojo::Parameters->new);
   
-  Query part of this URL, key/value pairs in an array reference will be merged
-  with L<Mojo::Parameters/"merge">, and key/value pairs in a hash reference
-  appended with L<Mojo::Parameters/"append">, defaults to a L<Mojo::Parameters>
+  Query part of this URL, key/value pairs in an array reference will be appended
+  with L<Mojo::Parameters/"append">, and key/value pairs in a hash reference
+  merged with L<Mojo::Parameters/"merge">, defaults to a L<Mojo::Parameters>
   object.
   
     # "2"
@@ -19479,13 +20618,13 @@ $fatpacked{"Mojo/URL.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_U
     Mojo::URL->new('http://example.com?a=1&b=2')->query(a => [2, 3]);
   
     # "http://example.com?a=2&b=2&c=3"
-    Mojo::URL->new('http://example.com?a=1&b=2')->query([a => 2, c => 3]);
+    Mojo::URL->new('http://example.com?a=1&b=2')->query({a => 2, c => 3});
   
     # "http://example.com?b=2"
-    Mojo::URL->new('http://example.com?a=1&b=2')->query([a => undef]);
+    Mojo::URL->new('http://example.com?a=1&b=2')->query({a => undef});
   
     # "http://example.com?a=1&b=2&a=2&c=3"
-    Mojo::URL->new('http://example.com?a=1&b=2')->query({a => 2, c => 3});
+    Mojo::URL->new('http://example.com?a=1&b=2')->query([a => 2, c => 3]);
   
   =head2 to_abs
   
@@ -19556,7 +20695,7 @@ $fatpacked{"Mojo/URL.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_U
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_URL
@@ -19650,7 +20789,7 @@ $fatpacked{"Mojo/Upload.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_UPLOAD
@@ -19670,21 +20809,22 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   use Mojo::UserAgent::Transactor;
   use Scalar::Util 'weaken';
   
-  use constant DEBUG => $ENV{MOJO_USERAGENT_DEBUG} || 0;
+  use constant DEBUG => $ENV{MOJO_CLIENT_DEBUG} || 0;
   
-  has ca              => sub { $ENV{MOJO_CA_FILE} };
-  has cert            => sub { $ENV{MOJO_CERT_FILE} };
-  has connect_timeout => sub { $ENV{MOJO_CONNECT_TIMEOUT} || 10 };
-  has cookie_jar      => sub { Mojo::UserAgent::CookieJar->new };
-  has [qw(local_address max_response_size)];
+  has ca                 => sub { $ENV{MOJO_CA_FILE} };
+  has cert               => sub { $ENV{MOJO_CERT_FILE} };
+  has connect_timeout    => sub { $ENV{MOJO_CONNECT_TIMEOUT} || 10 };
+  has cookie_jar         => sub { Mojo::UserAgent::CookieJar->new };
   has inactivity_timeout => sub { $ENV{MOJO_INACTIVITY_TIMEOUT} // 20 };
-  has ioloop             => sub { Mojo::IOLoop->new };
-  has key                => sub { $ENV{MOJO_KEY_FILE} };
-  has max_connections    => 5;
-  has max_redirects => sub { $ENV{MOJO_MAX_REDIRECTS} || 0 };
-  has proxy => sub { Mojo::UserAgent::Proxy->new };
+  has insecure           => sub { $ENV{MOJO_INSECURE} };
+  has [qw(local_address max_response_size)];
+  has ioloop => sub { Mojo::IOLoop->new };
+  has key    => sub { $ENV{MOJO_KEY_FILE} };
+  has max_connections => 5;
+  has max_redirects   => sub { $ENV{MOJO_MAX_REDIRECTS} || 0 };
+  has proxy           => sub { Mojo::UserAgent::Proxy->new };
   has request_timeout => sub { $ENV{MOJO_REQUEST_TIMEOUT} // 0 };
-  has server => sub { Mojo::UserAgent::Server->new(ioloop => shift->ioloop) };
+  has server     => sub { Mojo::UserAgent::Server->new(ioloop => shift->ioloop) };
   has transactor => sub { Mojo::UserAgent::Transactor->new };
   
   # Common HTTP methods
@@ -19726,23 +20866,19 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   
   sub start_p {
     my ($self, $tx) = @_;
-  
     my $promise = Mojo::Promise->new;
-    $self->start(
-      $tx => sub {
-        my ($self, $tx) = @_;
-        my $err = $tx->error;
-        $promise->resolve($tx) if !$err || $err->{code};
-        $promise->reject($err->{message});
-      }
-    );
-  
+    $self->start($tx => sub { shift->transactor->promisify($promise, shift) });
     return $promise;
   }
   
   sub websocket {
     my ($self, $cb) = (shift, pop);
     $self->start($self->build_websocket_tx(@_), $cb);
+  }
+  
+  sub websocket_p {
+    my $self = shift;
+    return $self->start_p($self->build_websocket_tx(@_));
   }
   
   sub _cleanup {
@@ -19753,10 +20889,10 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   }
   
   sub _connect {
-    my ($self, $loop, $peer, $tx, $handle, $cb) = @_;
+    my ($self, $loop, $tx, $handle) = @_;
   
     my $t = $self->transactor;
-    my ($proto, $host, $port) = $peer ? $t->peer($tx) : $t->endpoint($tx);
+    my ($proto, $host, $port) = $handle ? $t->endpoint($tx) : $t->peer($tx);
   
     my %options = (timeout => $self->connect_timeout);
     if ($proto eq 'http+unix') { $options{path} = $host }
@@ -19773,8 +20909,10 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
     }
   
     # TLS
-    map { $options{"tls_$_"} = $self->$_ } qw(ca cert key)
-      if ($options{tls} = $proto eq 'https');
+    if ($options{tls} = $proto eq 'https') {
+      map { $options{"tls_$_"} = $self->$_ } qw(ca cert key);
+      $options{tls_verify} = 0x00 if $self->insecure;
+    }
   
     weaken $self;
     my $id;
@@ -19790,8 +20928,8 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
         $stream->on(timeout => sub { $self->_error($id, 'Inactivity timeout') });
         $stream->on(close => sub { $self && $self->_finish($id, 1) });
         $stream->on(error => sub { $self && $self->_error($id, pop) });
-        $stream->on(read => sub { $self->_read($id, pop) });
-        $self->$cb($id);
+        $stream->on(read  => sub { $self->_read($id, pop) });
+        $self->_process($id);
       }
     );
   }
@@ -19801,48 +20939,30 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   
     # Start CONNECT request
     return undef unless my $new = $self->transactor->proxy_connect($old);
-    return $self->_start(
+    my $id;
+    return $id = $self->_start(
       ($loop, $new) => sub {
         my ($self, $tx) = @_;
   
-        # CONNECT failed
+        # Real transaction
         $old->previous($tx)->req->via_proxy(0);
-        my $id = $tx->connection;
-        if ($tx->error || !$tx->res->is_success || !$tx->keep_alive) {
-          $old->res->error({message => 'Proxy connection failed'});
-          $self->_remove($id) if $id;
-          return $self->$cb($old);
-        }
+        my $c = $self->{connections}{$id}
+          = {cb => $cb, ioloop => $loop, tx => $old};
+  
+        # CONNECT failed
+        return $self->_error($id, 'Proxy connection failed')
+          if $tx->error || !$tx->res->is_success || !$tx->keep_alive;
   
         # Start real transaction without TLS upgrade
-        return $self->_start($loop, $old->connection($id), $cb)
-          unless $tx->req->url->protocol eq 'https';
+        return $self->_process($id) unless $tx->req->url->protocol eq 'https';
   
         # TLS upgrade before starting the real transaction
         my $handle = $loop->stream($id)->steal_handle;
         $self->_remove($id);
-        $id = $self->_connect($loop, 0, $old, $handle,
-          sub { shift->_start($loop, $old->connection($id), $cb) });
-        $self->{connections}{$id} = {cb => $cb, ioloop => $loop, tx => $old};
+        $id = $self->_connect($loop, $old, $handle);
+        $self->{connections}{$id} = $c;
       }
     );
-  }
-  
-  sub _connected {
-    my ($self, $id) = @_;
-  
-    my $c      = $self->{connections}{$id};
-    my $stream = $c->{ioloop}->stream($id)->timeout($self->inactivity_timeout);
-    my $tx     = $c->{tx}->connection($id);
-    my $handle = $stream->handle;
-    unless ($handle->isa('IO::Socket::UNIX')) {
-      $tx->local_address($handle->sockhost)->local_port($handle->sockport);
-      $tx->remote_address($handle->peerhost)->remote_port($handle->peerport);
-    }
-  
-    weaken $self;
-    $tx->on(resume => sub { $self->_write($id) });
-    $self->_write($id);
   }
   
   sub _connection {
@@ -19850,12 +20970,12 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   
     # Reuse connection
     my ($proto, $host, $port) = $self->transactor->endpoint($tx);
-    my $id = $tx->connection || $self->_dequeue($loop, "$proto:$host:$port", 1);
-    if ($id) {
+    my $id;
+    if ($id = $self->_dequeue($loop, "$proto:$host:$port", 1)) {
       warn "-- Reusing connection $id ($proto://$host:$port)\n" if DEBUG;
       @{$self->{connections}{$id}}{qw(cb tx)} = ($cb, $tx);
       $tx->kept_alive(1) unless $tx->connection;
-      $self->_connected($id);
+      $self->_process($id);
       return $id;
     }
   
@@ -19866,7 +20986,7 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
     $tx->res->error({message => "Unsupported protocol: $proto"})
       and return $loop->next_tick(sub { $self->$cb($tx) })
       unless $proto eq 'http' || $proto eq 'https' || $proto eq 'http+unix';
-    $id = $self->_connect($loop, 1, $tx, undef, \&_connected);
+    $id = $self->_connect($loop, $tx);
     warn "-- Connect $id ($proto://$host:$port)\n" if DEBUG;
     $self->{connections}{$id} = {cb => $cb, ioloop => $loop, tx => $tx};
   
@@ -19901,8 +21021,8 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
     my ($self, $id, $close) = @_;
   
     # Remove request timeout and finish transaction
-    return unless my $c = $self->{connections}{$id};
-    $c->{ioloop}->remove($c->{timeout}) if $c->{timeout};
+    return undef unless my $c = $self->{connections}{$id};
+    $c->{ioloop}->remove(delete $c->{timeout}) if $c->{timeout};
     return $self->_reuse($id, $close) unless my $old = $c->{tx};
   
     # Premature connection close
@@ -19913,7 +21033,6 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   
     # Always remove connection for WebSockets
     return $self->_remove($id) if $old->is_websocket;
-  
     $self->cookie_jar->collect($old);
   
     # Upgrade connection to WebSocket
@@ -19930,12 +21049,28 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
     $c->{cb}($self, $old) unless $self->_redirect($c, $old);
   }
   
+  sub _process {
+    my ($self, $id) = @_;
+  
+    my $c      = $self->{connections}{$id};
+    my $stream = $c->{ioloop}->stream($id)->timeout($self->inactivity_timeout);
+    my $tx     = $c->{tx}->connection($id);
+    my $handle = $stream->handle;
+    unless ($handle->isa('IO::Socket::UNIX')) {
+      $tx->local_address($handle->sockhost)->local_port($handle->sockport);
+      $tx->remote_address($handle->peerhost)->remote_port($handle->peerport);
+    }
+  
+    weaken $self;
+    $tx->on(resume => sub { $self->_write($id) });
+    $self->_write($id);
+  }
+  
   sub _read {
     my ($self, $id, $chunk) = @_;
   
     # Corrupted connection
     return $self->_remove($id) unless my $tx = $self->{connections}{$id}{tx};
-  
     warn term_escape "-- Client <<< Server (@{[_url($tx)]})\n$chunk\n" if DEBUG;
     $tx->client_read($chunk);
     $self->_finish($id) if $tx->is_finished;
@@ -19974,24 +21109,23 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   sub _start {
     my ($self, $loop, $tx, $cb) = @_;
   
-    # Application serve
+    # Application server
+    $self->emit(prepare => $tx);
     my $url = $tx->req->url;
-    unless ($url->is_abs) {
-      my $base
-        = $loop == $self->ioloop ? $self->server->url : $self->server->nb_url;
+    if (!$url->is_abs && (my $server = $self->server)) {
+      my $base = $loop == $self->ioloop ? $server->url : $server->nb_url;
       $url->scheme($base->scheme)->host($base->host)->port($base->port);
     }
   
     $_->prepare($tx) for $self->proxy, $self->cookie_jar;
     my $max = $self->max_response_size;
     $tx->res->max_message_size($max) if defined $max;
-  
     $self->emit(start => $tx);
     return undef unless my $id = $self->_connection($loop, $tx, $cb);
-    if (my $timeout = $self->request_timeout) {
+    if (my $t = $self->request_timeout) {
       weaken $self;
       $self->{connections}{$id}{timeout}
-        = $loop->timer($timeout => sub { $self->_error($id, 'Request timeout') });
+        ||= $loop->timer($t => sub { $self->_error($id, 'Request timeout') });
     }
   
     return $id;
@@ -20009,6 +21143,7 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
     my $chunk = $tx->client_write;
     warn term_escape "-- Client >>> Server (@{[_url($tx)]})\n$chunk\n" if DEBUG;
     return unless length $chunk;
+  
     weaken $self;
     $c->{ioloop}->stream($id)->write($chunk => sub { $self->_write($id) });
   }
@@ -20053,6 +21188,9 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
     my $tx = $ua->cert('tls.crt')->key('tls.key')
       ->post('https://example.com' => json => {top => 'secret'});
   
+    # Form POST (application/x-www-form-urlencoded)
+    my $tx = $ua->post('https://metacpan.org/search' => form => {q => 'mojo'});
+  
     # Search DuckDuckGo anonymously through Tor
     $ua->proxy->http('socks://127.0.0.1:9050');
     say $ua->get('api.3g2upl4pq6kufc4m.onion/?q=mojolicious&format=json')
@@ -20063,17 +21201,8 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   
     # Follow redirects to download Mojolicious from GitHub
     $ua->max_redirects(5)
-      ->get('https://www.github.com/kraih/mojo/tarball/master')
-      ->result->content->asset->move_to('/home/sri/mojo.tar.gz');
-  
-    # Form POST (application/x-www-form-urlencoded) with manual exception handling
-    my $tx = $ua->post('https://metacpan.org/search' => form => {q => 'mojo'});
-    if (my $res = $tx->success) { say $res->body }
-    else {
-      my $err = $tx->error;
-      die "$err->{code} response: $err->{message}" if $err->{code};
-      die "Connection error: $err->{message}";
-    }
+      ->get('https://www.github.com/mojolicious/mojo/tarball/master')
+      ->result->save_to('/home/sri/mojo.tar.gz');
   
     # Non-blocking request
     $ua->get('mojolicious.org' => sub {
@@ -20108,8 +21237,8 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   
   L<Mojo::UserAgent> is a full featured non-blocking I/O HTTP and WebSocket user
   agent, with IPv6, TLS, SNI, IDNA, HTTP/SOCKS5 proxy, UNIX domain socket, Comet
-  (long polling), keep-alive, connection pooling, timeout, cookie, multipart, gzip
-  compression and multiple event loop support.
+  (long polling), Promises/A+, keep-alive, connection pooling, timeout, cookie,
+  multipart, gzip compression and multiple event loop support.
   
   All connections will be reset automatically if a new process has been forked,
   this allows multiple processes to share the same L<Mojo::UserAgent> object
@@ -20118,7 +21247,7 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   For better scalability (epoll, kqueue) and to provide non-blocking name
   resolution, SOCKS5 as well as TLS support, the optional modules L<EV> (4.0+),
   L<Net::DNS::Native> (0.15+), L<IO::Socket::Socks> (0.64+) and
-  L<IO::Socket::SSL> (1.94+) will be used automatically if possible. Individual
+  L<IO::Socket::SSL> (2.009+) will be used automatically if possible. Individual
   features can also be disabled with the C<MOJO_NO_NNR>, C<MOJO_NO_SOCKS> and
   C<MOJO_NO_TLS> environment variables.
   
@@ -20129,6 +21258,23 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   L<Mojo::UserAgent> inherits all events from L<Mojo::EventEmitter> and can emit
   the following new ones.
   
+  =head2 prepare
+  
+    $ua->on(prepare => sub {
+      my ($ua, $tx) = @_;
+      ...
+    });
+  
+  Emitted whenever a new transaction is being prepared, before relative URLs are
+  rewritten and cookies added. This includes automatically prepared proxy
+  C<CONNECT> requests and followed redirects.
+  
+    $ua->on(prepare => sub {
+      my ($ua, $tx) = @_;
+      $tx->req->url(Mojo::URL->new('/mock-mojolicious'))
+        if $tx->req->url->host eq 'mojolicious.org';
+    });
+  
   =head2 start
   
     $ua->on(start => sub {
@@ -20136,7 +21282,7 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
       ...
     });
   
-  Emitted whenever a new transaction is about to start, this includes
+  Emitted whenever a new transaction is about to start. This includes
   automatically prepared proxy C<CONNECT> requests and followed redirects.
   
     $ua->on(start => sub {
@@ -20154,8 +21300,7 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
     $ua    = $ua->ca('/etc/tls/ca.crt');
   
   Path to TLS certificate authority file used to verify the peer certificate,
-  defaults to the value of the C<MOJO_CA_FILE> environment variable. Also
-  activates hostname verification.
+  defaults to the value of the C<MOJO_CA_FILE> environment variable.
   
     # Show certificate authorities for debugging
     IO::Socket::SSL::set_defaults(
@@ -20216,6 +21361,17 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   closed, defaults to the value of the C<MOJO_INACTIVITY_TIMEOUT> environment
   variable or C<20>. Setting the value to C<0> will allow connections to be
   inactive indefinitely.
+  
+  =head2 insecure
+  
+    my $bool = $ua->insecure;
+    $ua      = $ua->insecure($bool);
+  
+  Do not require a valid TLS certificate to access HTTPS/WSS sites, defaults to
+  the value of the C<MOJO_INSECURE> environment variable.
+  
+    # Disable TLS certificate verification for testing
+    say $ua->insecure(1)->get('https://127.0.0.1:3000')->result->code;
   
   =head2 ioloop
   
@@ -20338,6 +21494,9 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   
     # Change name of user agent
     $ua->transactor->name('MyUA 1.0');
+  
+    # Disable compression
+    $ua->transactor->compressed(0);
   
   =head1 METHODS
   
@@ -20508,7 +21667,8 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   =head2 options
   
     my $tx = $ua->options('example.com');
-    my $tx = $ua->options('http://example.com' => {Accept => '*/*'} => 'Content!');
+    my $tx = $ua->options(
+      'http://example.com' => {Accept => '*/*'} => 'Content!');
     my $tx = $ua->options(
       'http://example.com' => {Accept => '*/*'} => form => {a => 'b'});
     my $tx = $ua->options(
@@ -20712,16 +21872,39 @@ $fatpacked{"Mojo/UserAgent.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
       'Sec-WebSocket-Extensions' => 'permessage-deflate'
     } => sub {...});
   
+  =head2 websocket_p
+  
+    my $promise = $ua->websocket_p('ws://example.com');
+  
+  Same as L</"websocket">, but returns a L<Mojo::Promise> object instead of
+  accepting a callback.
+  
+    $ua->websocket_p('wss://example.com/echo')->then(sub {
+      my $tx = shift;
+      my $promise = Mojo::Promise->new;
+      $tx->on(finish => sub { $promise->resolve });
+      $tx->on(message => sub {
+        my ($tx, $msg) = @_;
+        say "WebSocket message: $msg";
+        $tx->finish;
+      });
+      $tx->send('Hi!');
+      return $promise;
+    })->catch(sub {
+      my $err = shift;
+      warn "WebSocket error: $err";
+    })->wait;
+  
   =head1 DEBUGGING
   
-  You can set the C<MOJO_USERAGENT_DEBUG> environment variable to get some
-  advanced diagnostics information printed to C<STDERR>.
+  You can set the C<MOJO_CLIENT_DEBUG> environment variable to get some advanced
+  diagnostics information printed to C<STDERR>.
   
-    MOJO_USERAGENT_DEBUG=1
+    MOJO_CLIENT_DEBUG=1
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_USERAGENT
@@ -20751,12 +21934,11 @@ $fatpacked{"Mojo/UserAgent/CookieJar.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
       next if length($cookie->value // '') > $size;
   
       # Replace cookie
-      my $origin = $cookie->origin // '';
-      next unless my $domain = lc($cookie->domain // $origin);
-      next unless my $path = $cookie->path;
+      next unless my $domain = lc($cookie->domain // '');
+      next unless my $path   = $cookie->path;
       next unless length(my $name = $cookie->name // '');
       my $jar = $self->{jar}{$domain} ||= [];
-      @$jar = (grep({ _compare($_, $path, $name, $origin) } @$jar), $cookie);
+      @$jar = (grep({ _compare($_, $path, $name, $domain) } @$jar), $cookie);
     }
   
     return $self;
@@ -20775,7 +21957,8 @@ $fatpacked{"Mojo/UserAgent/CookieJar.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
   
       # Validate domain
       my $host = lc $url->ihost;
-      my $domain = lc($cookie->domain // $cookie->origin($host)->origin);
+      $cookie->domain($host)->host_only(1) unless $cookie->domain;
+      my $domain = lc $cookie->domain;
       if (my $cb = $self->ignore) { next if $cb->($cookie) }
       next if $host ne $domain && ($host !~ /\Q.$domain\E$/ || $host =~ /\.\d+$/);
   
@@ -20794,14 +21977,14 @@ $fatpacked{"Mojo/UserAgent/CookieJar.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
   
     my @found;
     my $domain = my $host = lc $url->ihost;
-    my $path = $url->path->to_abs_string;
+    my $path   = $url->path->to_abs_string;
     while ($domain) {
       next unless my $old = $self->{jar}{$domain};
   
       # Grab cookies
       my $new = $self->{jar}{$domain} = [];
       for my $cookie (@$old) {
-        next unless $cookie->domain || $host eq $cookie->origin;
+        next if $cookie->host_only && $host ne $cookie->domain;
   
         # Check if cookie has expired
         if (defined(my $expires = $cookie->expires)) { next if time > $expires }
@@ -20830,9 +22013,11 @@ $fatpacked{"Mojo/UserAgent/CookieJar.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
   }
   
   sub _compare {
-    my ($cookie, $path, $name, $origin) = @_;
-    return 1 if $cookie->path ne $path || $cookie->name ne $name;
-    return ($cookie->origin // '') ne $origin;
+    my ($cookie, $path, $name, $domain) = @_;
+    return
+         $cookie->path ne $path
+      || $cookie->name ne $name
+      || $cookie->domain ne $domain;
   }
   
   sub _path { $_[0] eq '/' || $_[0] eq $_[1] || index($_[1], "$_[0]/") == 0 }
@@ -20949,7 +22134,7 @@ $fatpacked{"Mojo/UserAgent/CookieJar.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_USERAGENT_COOKIEJAR
@@ -21063,7 +22248,7 @@ $fatpacked{"Mojo/UserAgent/Proxy.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_USERAGENT_PROXY
@@ -21093,35 +22278,32 @@ $fatpacked{"Mojo/UserAgent/Server.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
   
   sub nb_url { shift->_url(1, @_) }
   
-  sub restart { shift->_restart(1) }
+  sub restart { delete @{$_[0]}{qw(nb_port nb_server port server)} }
   
   sub url { shift->_url(0, @_) }
   
-  sub _restart {
-    my ($self, $full, $proto) = @_;
-    delete @{$self}{qw(nb_port port)} if $full;
-  
-    $self->{proto} = $proto ||= 'http';
-  
-    # Blocking
-    my $server = $self->{server}
-      = Mojo::Server::Daemon->new(ioloop => $self->ioloop, silent => 1);
-    weaken $server->app($self->app)->{app};
-    my $port = $self->{port} ? ":$self->{port}" : '';
-    $self->{port}
-      = $server->listen(["$proto://127.0.0.1$port"])->start->ports->[0];
-  
-    # Non-blocking
-    $server = $self->{nb_server} = Mojo::Server::Daemon->new(silent => 1);
-    weaken $server->app($self->app)->{app};
-    $port = $self->{nb_port} ? ":$self->{nb_port}" : '';
-    $self->{nb_port}
-      = $server->listen(["$proto://127.0.0.1$port"])->start->ports->[0];
-  }
-  
   sub _url {
-    my ($self, $nb) = (shift, shift);
-    $self->_restart(0, @_) if !$self->{server} || @_;
+    my ($self, $nb, $proto) = @_;
+  
+    if (!$self->{server} || $proto) {
+      $proto = $self->{proto} = $proto || 'http';
+  
+      # Blocking
+      my $server = $self->{server}
+        = Mojo::Server::Daemon->new(ioloop => $self->ioloop, silent => 1);
+      weaken $server->app($self->app)->{app};
+      my $port = $self->{port} ? ":$self->{port}" : '';
+      $self->{port}
+        = $server->listen(["$proto://127.0.0.1$port"])->start->ports->[0];
+  
+      # Non-blocking
+      $server = $self->{nb_server} = Mojo::Server::Daemon->new(silent => 1);
+      weaken $server->app($self->app)->{app};
+      $port = $self->{nb_port} ? ":$self->{nb_port}" : '';
+      $self->{nb_port}
+        = $server->listen(["$proto://127.0.0.1$port"])->start->ports->[0];
+    }
+  
     my $port = $nb ? $self->{nb_port} : $self->{port};
     return Mojo::URL->new("$self->{proto}://127.0.0.1:$port/");
   }
@@ -21202,7 +22384,7 @@ $fatpacked{"Mojo/UserAgent/Server.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_USERAGENT_SERVER
@@ -21224,6 +22406,7 @@ $fatpacked{"Mojo/UserAgent/Transactor.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
   use Mojo::Util qw(encode url_escape);
   use Mojo::WebSocket qw(challenge client_handshake);
   
+  has compressed => sub { $ENV{MOJO_GZIP} // 1 };
   has generators =>
     sub { {form => \&_form, json => \&_json, multipart => \&_multipart} };
   has name => 'Mojolicious (Perl)';
@@ -21250,6 +22433,15 @@ $fatpacked{"Mojo/UserAgent/Transactor.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
   }
   
   sub peer { _proxy($_[1], $_[0]->endpoint($_[1])) }
+  
+  sub promisify {
+    my ($self, $promise, $tx) = @_;
+    my $err = $tx->error;
+    return $promise->reject($err->{message}) if $err && !$err->{code};
+    return $promise->reject('WebSocket handshake failed')
+      if $tx->req->is_handshake && !$tx->is_websocket;
+    $promise->resolve($tx);
+  }
   
   sub proxy_connect {
     my ($self, $old) = @_;
@@ -21278,7 +22470,7 @@ $fatpacked{"Mojo/UserAgent/Transactor.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
     my ($self, $old) = @_;
   
     # Commonly used codes
-    my $res = $old->res;
+    my $res  = $old->res;
     my $code = $res->code // 0;
     return undef unless grep { $_ == $code } 301, 302, 303, 307, 308;
   
@@ -21301,7 +22493,7 @@ $fatpacked{"Mojo/UserAgent/Transactor.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
       $new->req($clone);
     }
     else {
-      my $m = uc $req->method;
+      my $m       = uc $req->method;
       my $headers = $new->req->method($code == 303 || $m eq 'POST' ? 'GET' : $m)
         ->content->headers($req->headers->clone)->headers;
       $headers->remove($_) for grep {/^content-/i} @{$headers->names};
@@ -21324,7 +22516,8 @@ $fatpacked{"Mojo/UserAgent/Transactor.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
     my $headers = $req->headers;
     $headers->from_hash(shift) if ref $_[0] eq 'HASH';
     $headers->user_agent($self->name) unless $headers->user_agent;
-    $headers->accept_encoding('gzip') unless $headers->accept_encoding;
+    if    (!$self->compressed)         { $tx->res->content->auto_decompress(0) }
+    elsif (!$headers->accept_encoding) { $headers->accept_encoding('gzip') }
   
     # Generator
     if (@_ > 1) {
@@ -21351,12 +22544,12 @@ $fatpacked{"Mojo/UserAgent/Transactor.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
   
     # New WebSocket transaction
     my $sub = ref $_[-1] eq 'ARRAY' ? pop : [];
-    my $tx = $self->tx(GET => @_);
+    my $tx  = $self->tx(GET => @_);
     my $req = $tx->req;
     $req->headers->sec_websocket_protocol(join ', ', @$sub) if @$sub;
   
     # Handshake protocol
-    my $url = $req->url;
+    my $url   = $req->url;
     my $proto = $url->protocol // '';
     if    ($proto eq 'ws')      { $url->scheme('http') }
     elsif ($proto eq 'wss')     { $url->scheme('https') }
@@ -21388,7 +22581,7 @@ $fatpacked{"Mojo/UserAgent/Transactor.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
   
     # Query parameters or urlencoded
     my $method = uc $req->method;
-    my @form = map { $_ => $form->{$_} } sort keys %$form;
+    my @form   = map { $_ => $form->{$_} } sort keys %$form;
     if ($method eq 'GET' || $method eq 'HEAD') { $req->url->query->merge(@form) }
     else {
       $req->body(
@@ -21465,7 +22658,7 @@ $fatpacked{"Mojo/UserAgent/Transactor.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
       # Content-Disposition
       next unless defined $name;
       $name = url_escape $name, '"';
-      $name = encode $charset, $name if $charset;
+      $name = encode $charset,  $name if $charset;
       my $disposition = qq{form-data; name="$name"};
       $disposition .= qq{; filename="$filename"} if defined $filename;
       $headers->content_disposition($disposition);
@@ -21542,6 +22735,15 @@ $fatpacked{"Mojo/UserAgent/Transactor.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
   
   L<Mojo::UserAgent::Transactor> implements the following attributes.
   
+  =head2 compressed
+  
+    my $bool = $t->compressed;
+    $t       = $t->compressed($bool);
+  
+  Try to negotiate compression for the response content and decompress it
+  automatically, defaults to the value of the C<MOJO_GZIP> environment variable or
+  true.
+  
   =head2 generators
   
     my $generators = $t->generators;
@@ -21585,6 +22787,13 @@ $fatpacked{"Mojo/UserAgent/Transactor.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
     my ($proto, $host, $port) = $t->peer(Mojo::Transaction::HTTP->new);
   
   Actual peer for transaction.
+  
+  =head2 promisify
+  
+    $t->promisify(Mojo::Promise->new, Mojo::Transaction::HTTP->new);
+  
+  Resolve or reject L<Mojo::Promise> object with L<Mojo::Transaction::HTTP>
+  object.
   
   =head2 proxy_connect
   
@@ -21758,7 +22967,7 @@ $fatpacked{"Mojo/UserAgent/Transactor.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_USERAGENT_TRANSACTOR
@@ -21774,10 +22983,13 @@ $fatpacked{"Mojo/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   use Encode 'find_encoding';
   use Exporter 'import';
   use Getopt::Long 'GetOptionsFromArray';
+  use IO::Compress::Gzip;
   use IO::Poll qw(POLLIN POLLPRI);
+  use IO::Uncompress::Gunzip;
   use List::Util 'min';
   use MIME::Base64 qw(decode_base64 encode_base64);
   use Pod::Usage 'pod2usage';
+  use Sub::Util 'set_subname';
   use Symbol 'delete_package';
   use Time::HiRes        ();
   use Unicode::Normalize ();
@@ -21796,10 +23008,6 @@ $fatpacked{"Mojo/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     PC_INITIAL_BIAS => 72,
     PC_INITIAL_N    => 128
   };
-  
-  # Supported on Perl 5.22+
-  my $NAME
-    = eval { require Sub::Util; Sub::Util->can('set_subname') } || sub { $_[1] };
   
   # To generate a new HTML entity table run this command
   # perl examples/entities.pl
@@ -21830,11 +23038,12 @@ $fatpacked{"Mojo/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   
   our @EXPORT_OK = (
     qw(b64_decode b64_encode camelize class_to_file class_to_path decamelize),
-    qw(decode deprecated dumper encode extract_usage getopt hmac_sha1_sum),
-    qw(html_attr_unescape html_unescape md5_bytes md5_sum monkey_patch),
-    qw(punycode_decode punycode_encode quote secure_compare sha1_bytes sha1_sum),
-    qw(slugify split_cookie_header split_header steady_time tablify term_escape),
-    qw(trim unindent unquote url_escape url_unescape xml_escape xor_encode)
+    qw(decode deprecated dumper encode extract_usage getopt gunzip gzip),
+    qw(hmac_sha1_sum html_attr_unescape html_unescape md5_bytes md5_sum),
+    qw(monkey_patch punycode_decode punycode_encode quote secure_compare),
+    qw(sha1_bytes sha1_sum slugify split_cookie_header split_header steady_time),
+    qw(tablify term_escape trim unindent unquote url_escape url_unescape),
+    qw(xml_escape xor_encode)
   );
   
   # Aliases
@@ -21912,10 +23121,27 @@ $fatpacked{"Mojo/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   
   sub getopt {
     my ($array, $opts) = map { ref $_[0] eq 'ARRAY' ? shift : $_ } \@ARGV, [];
+  
     my $save = Getopt::Long::Configure(qw(default no_auto_abbrev no_ignore_case),
       @$opts);
-    GetOptionsFromArray $array, @_;
+    my $result = GetOptionsFromArray $array, @_;
     Getopt::Long::Configure($save);
+  
+    return $result;
+  }
+  
+  sub gunzip {
+    my $compressed = shift;
+    IO::Uncompress::Gunzip::gunzip \$compressed, \my $uncompressed
+      or croak "Couldn't gunzip: $IO::Uncompress::Gunzip::GzipError";
+    return $uncompressed;
+  }
+  
+  sub gzip {
+    my $uncompressed = shift;
+    IO::Compress::Gzip::gzip \$uncompressed, \my $compressed
+      or croak "Couldn't gzip: $IO::Compress::Gzip::GzipError";
+    return $compressed;
   }
   
   sub html_attr_unescape { _html(shift, 1) }
@@ -21925,7 +23151,7 @@ $fatpacked{"Mojo/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     my ($class, %patch) = @_;
     no strict 'refs';
     no warnings 'redefine';
-    *{"${class}::$_"} = $NAME->("${class}::$_", $patch{$_}) for keys %patch;
+    *{"${class}::$_"} = set_subname("${class}::$_", $patch{$_}) for keys %patch;
   }
   
   # Direct translation of RFC 3492
@@ -21996,7 +23222,7 @@ $fatpacked{"Mojo/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
           }
   
           $output .= chr $q + ($q < 26 ? 0x61 : 0x30 - 26);
-          $bias = _adapt($delta, $h + 1, $h == $basic);
+          $bias  = _adapt($delta, $h + 1, $h == $basic);
           $delta = 0;
           $h++;
         }
@@ -22122,7 +23348,7 @@ $fatpacked{"Mojo/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     my ($input, $key) = @_;
   
     # Encode with variable key length
-    my $len = length $key;
+    my $len    = length $key;
     my $buffer = my $output = '';
     $output .= $buffer ^ $key
       while length($buffer = substr($input, 0, $len, '')) == $len;
@@ -22354,7 +23580,8 @@ $fatpacked{"Mojo/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     deprecated 'foo is DEPRECATED in favor of bar';
   
   Warn about deprecated feature from perspective of caller. You can also set the
-  C<MOJO_FATAL_DEPRECATIONS> environment variable to make them die instead.
+  C<MOJO_FATAL_DEPRECATIONS> environment variable to make them die instead with
+  L<Carp>.
   
   =head2 dumper
   
@@ -22407,6 +23634,18 @@ $fatpacked{"Mojo/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
     # Extract "charset" option
     getopt ['--charset', 'UTF-8'], 'charset=s' => \my $charset;
     say $charset;
+  
+  =head2 gunzip
+  
+    my $uncompressed = gunzip $compressed;
+  
+  Uncompress bytes with L<IO::Compress::Gunzip>.
+  
+  =head2 gzip
+  
+    my $compressed = gzip $uncompressed;
+  
+  Compress bytes with L<IO::Compress::Gzip>.
   
   =head2 hmac_sha1_sum
   
@@ -22657,7 +23896,7 @@ $fatpacked{"Mojo/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJO_
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
   
@@ -25021,7 +26260,7 @@ $fatpacked{"Mojo/WebSocket.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
     elsif ($len == 126) {
       return undef unless length $$buffer > 4;
       $hlen = 4;
-      $len = unpack 'x2n', $$buffer;
+      $len  = unpack 'x2n', $$buffer;
       warn "-- Extended 16-bit payload ($len)\n" if DEBUG;
     }
   
@@ -25029,7 +26268,7 @@ $fatpacked{"Mojo/WebSocket.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
     elsif ($len == 127) {
       return undef unless length $$buffer > 10;
       $hlen = 10;
-      $len = MODERN ? unpack('x2Q>', $$buffer) : unpack('x2x4N', $$buffer);
+      $len  = MODERN ? unpack('x2Q>', $$buffer) : unpack('x2x4N', $$buffer);
       warn "-- Extended 64-bit payload ($len)\n" if DEBUG;
     }
   
@@ -25174,22 +26413,32 @@ $fatpacked{"Mojo/WebSocket.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'
   
   Opcode for C<Text> frames.
   
+  =head1 DEBUGGING
+  
+  You can set the C<MOJO_WEBSOCKET_DEBUG> environment variable to get some
+  advanced diagnostics information printed to C<STDERR>.
+  
+    MOJO_WEBSOCKET_DEBUG=1
+  
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJO_WEBSOCKET
 
 $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS';
   package Mojolicious;
-  use Mojo::Base 'Mojo';
+  use Mojo::Base -base;
   
   # "Fry: Shut up and take my money!"
   use Carp ();
+  use Mojo::DynamicMethods -dispatch;
   use Mojo::Exception;
+  use Mojo::Home;
   use Mojo::Log;
   use Mojo::Util;
+  use Mojo::UserAgent;
   use Mojolicious::Commands;
   use Mojolicious::Controller;
   use Mojolicious::Plugins;
@@ -25200,14 +26449,10 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   use Mojolicious::Types;
   use Mojolicious::Validator;
   use Scalar::Util ();
-  use Time::HiRes  ();
   
-  has commands => sub {
-    my $commands = Mojolicious::Commands->new(app => shift);
-    Scalar::Util::weaken $commands->{app};
-    return $commands;
-  };
+  has commands         => sub { Mojolicious::Commands->new(app => shift) };
   has controller_class => 'Mojolicious::Controller';
+  has home             => sub { Mojo::Home->new->detect(ref shift) };
   has log              => sub {
     my $self = shift;
   
@@ -25219,15 +26464,16 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
       if -d $home->child('log') && -w _;
   
     # Reduced log output outside of development mode
+    return $log->level($ENV{MOJO_LOG_LEVEL}) if $ENV{MOJO_LOG_LEVEL};
     return $mode eq 'development' ? $log : $log->level('info');
   };
   has 'max_request_size';
-  has mode => sub { $ENV{MOJO_MODE} || $ENV{PLACK_ENV} || 'development' };
+  has mode     => sub { $ENV{MOJO_MODE} || $ENV{PLACK_ENV} || 'development' };
   has moniker  => sub { Mojo::Util::decamelize ref shift };
   has plugins  => sub { Mojolicious::Plugins->new };
   has renderer => sub { Mojolicious::Renderer->new };
   has routes   => sub { Mojolicious::Routes->new };
-  has secrets  => sub {
+  has secrets => sub {
     my $self = shift;
   
     # Warn developers about insecure default
@@ -25239,38 +26485,39 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   has sessions  => sub { Mojolicious::Sessions->new };
   has static    => sub { Mojolicious::Static->new };
   has types     => sub { Mojolicious::Types->new };
+  has ua        => sub { Mojo::UserAgent->new };
   has validator => sub { Mojolicious::Validator->new };
   
-  our $CODENAME = 'Doughnut';
-  our $VERSION  = '7.57';
+  our $CODENAME = 'Supervillain';
+  our $VERSION  = '8.23';
   
-  sub AUTOLOAD {
-    my $self = shift;
+  sub BUILD_DYNAMIC {
+    my ($class, $method, $dyn_methods) = @_;
   
-    my ($package, $method) = our $AUTOLOAD =~ /^(.+)::(.+)$/;
-    Carp::croak "Undefined subroutine &${package}::$method called"
-      unless Scalar::Util::blessed $self && $self->isa(__PACKAGE__);
-  
-    # Call helper with fresh controller
-    Carp::croak qq{Can't locate object method "$method" via package "$package"}
-      unless my $helper = $self->renderer->get_helper($method);
-    return $self->build_controller->$helper(@_);
+    return sub {
+      my $self    = shift;
+      my $dynamic = $dyn_methods->{$self->renderer}{$method};
+      return $self->build_controller->$dynamic(@_) if $dynamic;
+      my $package = ref $self;
+      Carp::croak qq{Can't locate object method "$method" via package "$package"};
+    };
   }
   
   sub build_controller {
     my ($self, $tx) = @_;
-    $tx ||= $self->build_tx;
   
     # Embedded application
     my $stash = {};
-    if (my $sub = $tx->can('stash')) { ($stash, $tx) = ($tx->$sub, $tx->tx) }
+    if ($tx && (my $sub = $tx->can('stash'))) {
+      ($stash, $tx) = ($tx->$sub, $tx->tx);
+    }
   
     # Build default controller
     my $defaults = $self->defaults;
     @$stash{keys %$defaults} = values %$defaults;
     my $c
       = $self->controller_class->new(app => $self, stash => $stash, tx => $tx);
-    Scalar::Util::weaken $c->{app};
+    $c->{tx} ||= $self->build_tx;
   
     return $c;
   }
@@ -25286,6 +26533,7 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
     return $tx;
   }
   
+  sub config   { Mojo::Util::_stash(config   => @_) }
   sub defaults { Mojo::Util::_stash(defaults => @_) }
   
   sub dispatch {
@@ -25300,13 +26548,14 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
     # Start timer (ignore static files)
     my $stash = $c->stash;
-    unless ($stash->{'mojo.static'} || $stash->{'mojo.started'}) {
+    $self->log->debug(sub {
       my $req    = $c->req;
       my $method = $req->method;
       my $path   = $req->url->path->to_abs_string;
-      $self->log->debug(qq{$method "$path"});
-      $stash->{'mojo.started'} = [Time::HiRes::gettimeofday];
-    }
+      my $id     = $req->request_id;
+      $c->helpers->timing->begin('mojo.timer');
+      return qq{$method "$path" ($id)};
+    }) unless $stash->{'mojo.static'};
   
     # Routes
     $plugins->emit_hook(before_routes => $c);
@@ -25325,7 +26574,6 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
     # Process with chain
     my $c = $self->build_controller(@_);
-    Scalar::Util::weaken $c->{tx};
     $self->plugins->emit_chain(around_dispatch => $c);
   
     # Delayed response
@@ -25348,11 +26596,10 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
     my $r = $self->routes->namespaces(["@{[ref $self]}::Controller", ref $self]);
   
     # Hide controller attributes/methods
-    $r->hide(qw(app continue cookie every_cookie every_param));
-    $r->hide(qw(every_signed_cookie finish flash helpers match on param));
-    $r->hide(qw(redirect_to render render_later render_maybe render_to_string));
-    $r->hide(qw(rendered req res respond_to send session signed_cookie stash));
-    $r->hide(qw(tx url_for validation write write_chunk));
+    $r->hide(qw(app cookie every_cookie every_param every_signed_cookie finish));
+    $r->hide(qw(helpers match on param render render_later render_maybe));
+    $r->hide(qw(render_to_string rendered req res send session signed_cookie));
+    $r->hide(qw(stash tx url_for write write_chunk));
   
     $self->plugin($_)
       for qw(HeaderCondition DefaultHelpers TagHelpers EPLRenderer EPRenderer);
@@ -25370,6 +26617,8 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
     $self->plugins->register_plugin(shift, $self, @_);
   }
   
+  sub server { $_[0]->plugins->emit_hook(before_server_start => @_[1, 0]) }
+  
   sub start {
     my $self = shift;
     $_->warmup for $self->static, $self->renderer;
@@ -25378,10 +26627,11 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
   sub startup { }
   
+  sub _die { CORE::die ref $_[0] ? $_[0] : Mojo::Exception->new(shift)->trace }
+  
   sub _exception {
     my ($next, $c) = @_;
-    local $SIG{__DIE__}
-      = sub { ref $_[0] ? CORE::die $_[0] : Mojo::Exception->throw(shift) };
+    local $SIG{__DIE__} = \&_die;
     $c->helpers->reply->exception($@) unless eval { $next->(); 1 };
   }
   
@@ -25429,6 +26679,20 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
   L<Mojolicious> will emit the following hooks in the listed order.
   
+  =head2 before_server_start
+  
+  Emitted right before the application server is started, for web servers that
+  support it, which includes all the built-in ones (except for
+  L<Mojo::Server::CGI>).
+  
+    $app->hook(before_server_start => sub {
+      my ($server, $app) = @_;
+      ...
+    });
+  
+  Useful for reconfiguring application servers dynamically or collecting server
+  diagnostics information. (Passed the server and application objects)
+  
   =head2 after_build_tx
   
   Emitted right after the transaction is built and before the HTTP request gets
@@ -25442,7 +26706,7 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   This is a very powerful hook and should not be used lightly, it makes some
   rather advanced features such as upload progress bars possible. Note that this
   hook will not work for embedded applications, because only the host application
-  gets to build transactions. (Passed the transaction and application object)
+  gets to build transactions. (Passed the transaction and application objects)
   
   =head2 around_dispatch
   
@@ -25566,8 +26830,7 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
   =head1 ATTRIBUTES
   
-  L<Mojolicious> inherits all attributes from L<Mojo> and implements the
-  following new ones.
+  L<Mojolicious> implements the following attributes.
   
   =head2 commands
   
@@ -25589,15 +26852,27 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   L<Mojolicious::Controller>. Note that this class needs to have already been
   loaded before the first request arrives.
   
+  =head2 home
+  
+    my $home = $app->home;
+    $app     = $app->home(Mojo::Home->new);
+  
+  The home directory of your application, defaults to a L<Mojo::Home> object
+  which stringifies to the actual path.
+  
+    # Portably generate path relative to home directory
+    my $path = $app->home->child('data', 'important.txt');
+  
   =head2 log
   
     my $log = $app->log;
     $app    = $app->log(Mojo::Log->new);
   
   The logging layer of your application, defaults to a L<Mojo::Log> object. The
-  level will default to C<debug> if the L</mode> is C<development>, or C<info>
-  otherwise. All messages will be written to C<STDERR>, or a C<log/$mode.log> file
-  if a C<log> directory exists.
+  level will default to either the C<MOJO_LOG_LEVEL> environment variable,
+  C<debug> if the L</mode> is C<development>, or C<info> otherwise. All messages
+  will be written to C<STDERR>, or a C<log/$mode.log> file if a C<log> directory
+  exists.
   
     # Log debug message
     $app->log->debug('It works');
@@ -25650,6 +26925,9 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   Used to render content, defaults to a L<Mojolicious::Renderer> object. For more
   information about how to generate content see
   L<Mojolicious::Guides::Rendering>.
+  
+    # Enable compression
+    $app->renderer->compress(1);
   
     # Add another "templates" directory
     push @{$app->renderer->paths}, '/home/sri/templates';
@@ -25706,6 +26984,9 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
     # Change name of cookie used for all sessions
     $app->sessions->cookie_name('mysession');
   
+    # Disable SameSite feature
+    $app->sessions->samesite(undef);
+  
   =head2 static
   
     my $static = $app->static;
@@ -25737,6 +27018,17 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
     # Add custom MIME type
     $app->types->type(twt => 'text/tweet');
   
+  =head2 ua
+  
+    my $ua = $app->ua;
+    $app   = $app->ua(Mojo::UserAgent->new);
+  
+  A full featured HTTP user agent for use in your applications, defaults to a
+  L<Mojo::UserAgent> object.
+  
+    # Perform blocking request
+    say $app->ua->get('example.com')->result->body;
+  
   =head2 validator
   
     my $validator = $app->validator;
@@ -25746,20 +27038,20 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
     # Add validation check
     $app->validator->add_check(foo => sub {
-      my ($validation, $name, $value) = @_;
+      my ($v, $name, $value) = @_;
       return $value ne 'foo';
     });
   
     # Add validation filter
     $app->validator->add_filter(quotemeta => sub {
-      my ($validation, $name, $value) = @_;
+      my ($v, $name, $value) = @_;
       return quotemeta $value;
     });
   
   =head1 METHODS
   
-  L<Mojolicious> inherits all methods from L<Mojo> and implements the following
-  new ones.
+  L<Mojolicious> inherits all methods from L<Mojo::Base> and implements the
+  following new ones.
   
   =head2 build_controller
   
@@ -25777,6 +27069,21 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
     my $tx = $app->build_tx;
   
   Build L<Mojo::Transaction::HTTP> object and emit L</"after_build_tx"> hook.
+  
+  =head2 config
+  
+    my $hash = $app->config;
+    my $foo  = $app->config('foo');
+    $app     = $app->config({foo => 'bar', baz => 23});
+    $app     = $app->config(foo => 'bar', baz => 23);
+  
+  Application configuration.
+  
+    # Remove value
+    my $foo = delete $app->config->{foo};
+  
+    # Assign multiple values at once
+    $app->config(foo => 'test', bar => 23);
   
   =head2 defaults
   
@@ -25874,6 +27181,12 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   Load a plugin, for a full list of example plugins included in the
   L<Mojolicious> distribution see L<Mojolicious::Plugins/"PLUGINS">.
   
+  =head2 server
+  
+    $app->server(Mojo::Server->new);
+  
+  Emits the L</"before_server_start"> hook.
+  
   =head2 start
   
     $app->start;
@@ -25899,7 +27212,7 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
       ...
     }
   
-  =head1 AUTOLOAD
+  =head1 HELPERS
   
   In addition to the L</"ATTRIBUTES"> and L</"METHODS"> above you can also call
   helpers on L<Mojolicious> objects. This includes all helpers from
@@ -25921,7 +27234,7 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
   =head2 Mojolicious Artwork
   
-    Copyright (C) 2010-2017, Sebastian Riedel.
+    Copyright (C) 2010-2019, Sebastian Riedel.
   
   Licensed under the CC-SA License, Version 4.0
   L<http://creativecommons.org/licenses/by-sa/4.0>.
@@ -25944,6 +27257,8 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   Every major release of L<Mojolicious> has a code name, these are the ones that
   have been used in the past.
   
+  8.0, C<Supervillain> (U+1F9B9)
+  
   7.0, C<Doughnut> (U+1F369)
   
   6.0, C<Clinking Beer Mugs> (U+1F37B)
@@ -25960,24 +27275,39 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
   =head1 SPONSORS
   
+  =over 2
+  
+  =item
+  
+  L<Stix|https://stix.no> sponsored the creation of the Mojolicious logo (designed
+  by Nicolai Graesdal) and transferred its copyright to Sebastian Riedel.
+  
+  =item
+  
   Some of the work on this distribution has been sponsored by
-  L<The Perl Foundation|http://www.perlfoundation.org>, thank you!
+  L<The Perl Foundation|http://www.perlfoundation.org>.
+  
+  =back
   
   =head1 PROJECT FOUNDER
   
-  Sebastian Riedel, C<sri@cpan.org>
+  Sebastian Riedel, C<kraih@mojolicious.org>
   
   =head1 CORE DEVELOPERS
   
-  Current members of the core team in alphabetical order:
+  Current voting members of the core team in alphabetical order:
   
   =over 2
   
-  Jan Henning Thorsen, C<jhthorsen@cpan.org>
+  CandyAngel, C<candyangel@mojolicious.org>
   
-  Joel Berger, C<jberger@cpan.org>
+  Dan Book, C<grinnz@mojolicious.org>
   
-  Marcus Ramberg, C<mramberg@cpan.org>
+  Jan Henning Thorsen, C<batman@mojolicious.org>
+  
+  Joel Berger, C<jberger@mojolicious.org>
+  
+  Marcus Ramberg, C<marcus@mojolicious.org>
   
   =back
   
@@ -25986,6 +27316,8 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   =over 2
   
   Abhijit Menon-Sen, C<ams@cpan.org>
+  
+  Christopher Rasch-Olsen Raa, C<christopher@mojolicious.org>
   
   Glen Hinkle, C<tempire@cpan.org>
   
@@ -26007,6 +27339,8 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
   Alex Salimon
   
+  Alexander Karelas
+  
   Alexey Likhatskiy
   
   Anatoly Sharifulin
@@ -26014,6 +27348,8 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   Andre Parker
   
   Andre Vieth
+  
+  Andreas Guldstrand
   
   Andreas Jaekel
   
@@ -26067,11 +27403,13 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
   Curt Tilmes
   
-  Dan Book
-  
   Daniel Kimsey
   
+  Daniel Mantovani
+  
   Danijel Tasov
+  
+  Dagfinn Ilmari Mannsåker
   
   Danny Thomas
   
@@ -26099,6 +27437,8 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
   Eugene Toropov
   
+  Flavio Poletti
+  
   Gisle Aas
   
   Graham Barr
@@ -26114,6 +27454,8 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   Ian Goodacre
   
   Ilya Chesnokov
+  
+  Ilya Rassadin
   
   James Duncan
   
@@ -26173,6 +27515,8 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
   Michael Harris
   
+  Michael Jemmeson
+  
   Mike Magowan
   
   Mirko Westermeier
@@ -26194,6 +27538,8 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   Pascal Gaudette
   
   Paul Evans
+  
+  Paul Robins
   
   Paul Tomlin
   
@@ -26241,11 +27587,15 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
   Simone Tampieri
   
+  Shoichi Kaji
+  
   Shu Cho
   
   Skye Shaw
   
   Stanis Trendelenburg
+  
+  Stefan Adams
   
   Steffen Ullrich
   
@@ -26295,15 +27645,15 @@ $fatpacked{"Mojolicious.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJ
   
   =head1 COPYRIGHT AND LICENSE
   
-  Copyright (C) 2008-2017, Sebastian Riedel and others.
+  Copyright (C) 2008-2019, Sebastian Riedel and others.
   
   This program is free software, you can redistribute it and/or modify it under
   the terms of the Artistic License version 2.0.
   
   =head1 SEE ALSO
   
-  L<https://github.com/kraih/mojo>, L<Mojolicious::Guides>,
-  L<http://mojolicious.org>.
+  L<https://github.com/mojolicious/mojo>, L<Mojolicious::Guides>,
+  L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS
@@ -26318,15 +27668,19 @@ $fatpacked{"Mojolicious/Command.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
   use Mojo::Server;
   use Mojo::Template;
   
-  has app => sub { Mojo::Server->new->build_app('Mojo::HelloWorld') };
+  has
+    app =>
+    sub { $_[0]{app_ref} = Mojo::Server->new->build_app('Mojo::HelloWorld') },
+    weak => 1;
   has description => 'No description';
   has 'quiet';
-  has usage => "Usage: APPLICATION\n";
+  has template => sub { {vars => 1} };
+  has usage    => "Usage: APPLICATION\n";
   
   sub chmod_file {
-    my ($self, $path, $mod) = @_;
-    chmod $mod, $path or croak qq{Can't chmod file "$path": $!};
-    return $self->_loud("  [chmod] $path " . sprintf('%lo', $mod));
+    my ($self, $path, $mode) = @_;
+    path($path)->chmod($mode);
+    return $self->_loud("  [chmod] $path " . sprintf('%lo', $mode));
   }
   
   sub chmod_rel_file { $_[0]->chmod_file($_[0]->rel_file($_[1]), $_[2]) }
@@ -26348,8 +27702,10 @@ $fatpacked{"Mojolicious/Command.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
   
   sub render_data {
     my ($self, $name) = (shift, shift);
-    Mojo::Template->new->name("template $name from DATA section")
-      ->render(data_section(ref $self, $name), @_);
+    my $template = Mojo::Template->new($self->template)
+      ->name("template $name from DATA section");
+    my $output = $template->render(data_section(ref $self, $name), @_);
+    return ref $output ? die $output : $output;
   }
   
   sub render_to_file {
@@ -26433,7 +27789,8 @@ $fatpacked{"Mojolicious/Command.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
     my $app  = $command->app;
     $command = $command->app(Mojolicious->new);
   
-  Application for command, defaults to a L<Mojo::HelloWorld> object.
+  Application for command, defaults to a L<Mojo::HelloWorld> object. Note that
+  this attribute is weakened.
   
     # Introspect
     say "Template path: $_" for @{$command->app->renderer->paths};
@@ -26451,6 +27808,14 @@ $fatpacked{"Mojolicious/Command.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
     $command = $command->quiet($bool);
   
   Limited command output.
+  
+  =head2 template
+  
+    my $template = $command->template;
+    $command     = $command->template({vars => 1});
+  
+  Attribute values passed to L<Mojo::Template> objects used to render templates
+  with L</"render_data">, defaults to activating C<vars>.
   
   =head2 usage
   
@@ -26480,13 +27845,14 @@ $fatpacked{"Mojolicious/Command.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
   
     $command = $command->create_dir('/home/sri/foo/bar');
   
-  Create a directory.
+  Create a directory if it does not exist already.
   
   =head2 create_rel_dir
   
     $command = $command->create_rel_dir('foo/bar/baz');
   
-  Portably create a directory relative to the current working directory.
+  Portably create a directory relative to the current working directory if it does
+  not exist already.
   
   =head2 extract_usage
   
@@ -26511,26 +27877,32 @@ $fatpacked{"Mojolicious/Command.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
   
     my $data = $command->render_data('foo_bar');
     my $data = $command->render_data('foo_bar', @args);
+    my $data = $command->render_data('foo_bar', {foo => 'bar'});
   
   Render a template from the C<DATA> section of the command class with
-  L<Mojo::Loader> and L<Mojo::Template>.
+  L<Mojo::Loader> and L<Mojo::Template>. The template can be configured with
+  L</"template">.
   
   =head2 render_to_file
   
     $command = $command->render_to_file('foo_bar', '/home/sri/foo.txt');
     $command = $command->render_to_file('foo_bar', '/home/sri/foo.txt', @args);
+    $command = $command->render_to_file(
+      'foo_bar', '/home/sri/foo.txt', {foo => 'bar'});
   
-  Render a template from the C<DATA> section of the command class with
-  L<Mojo::Template> to a file and create directory if necessary.
+  Render a template with L</"render_data"> to a file if it does not exist already,
+  and create the directory if necessary.
   
   =head2 render_to_rel_file
   
     $command = $command->render_to_rel_file('foo_bar', 'foo/bar.txt');
     $command = $command->render_to_rel_file('foo_bar', 'foo/bar.txt', @args);
+    $command = $command->render_to_rel_file(
+      'foo_bar', 'foo/bar.txt', {foo => 'bar'});
   
-  Portably render a template from the C<DATA> section of the command class with
-  L<Mojo::Template> to a file relative to the current working directory and
-  create directory if necessary.
+  Portably render a template with L</"render_data"> to a file relative to the
+  current working directory if it does not exist already, and create the directory
+  if necessary.
   
   =head2 run
   
@@ -26543,21 +27915,903 @@ $fatpacked{"Mojolicious/Command.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
   
     $command = $command->write_file('/home/sri/foo.txt', 'Hello World!');
   
-  Write text to a file and create directory if necessary.
+  Write text to a file if it does not exist already, and create the directory if
+  necessary.
   
   =head2 write_rel_file
   
     $command = $command->write_rel_file('foo/bar.txt', 'Hello World!');
   
-  Portably write text to a file relative to the current working directory and
-  create directory if necessary.
+  Portably write text to a file relative to the current working directory if it
+  does not exist already, and create the directory if necessary.
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_COMMAND
+
+$fatpacked{"Mojolicious/Command/Author/cpanify.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_AUTHOR_CPANIFY';
+  package Mojolicious::Command::Author::cpanify;
+  use Mojo::Base 'Mojolicious::Command';
+  
+  use Mojo::File 'path';
+  use Mojo::Util 'getopt';
+  
+  has description => 'Upload distribution to CPAN';
+  has usage       => sub { shift->extract_usage };
+  
+  sub run {
+    my ($self, @args) = @_;
+  
+    getopt \@args,
+      'p|password=s' => \(my $password = ''),
+      'u|user=s'     => \(my $user     = '');
+    die $self->usage unless my $file = shift @args;
+  
+    my $tx = $self->app->ua->tap(sub { $_->proxy->detect })->post(
+      "https://$user:$password\@pause.perl.org/pause/authenquery" => form => {
+        HIDDENNAME                        => $user,
+        CAN_MULTIPART                     => 1,
+        pause99_add_uri_upload            => path($file)->basename,
+        SUBMIT_pause99_add_uri_httpupload => ' Upload this file from my disk ',
+        pause99_add_uri_uri               => '',
+        pause99_add_uri_httpupload        => {file => $file},
+      }
+    );
+  
+    if (my $err = $tx->error) {
+      my $code = $tx->res->code // 0;
+      my $msg  = $err->{message};
+      if    ($code == 401) { $msg = 'Wrong username or password.' }
+      elsif ($code == 409) { $msg = 'File already exists on CPAN.' }
+      die qq{Problem uploading file "$file": $msg\n};
+    }
+  
+    say 'Upload successful!';
+  }
+  
+  1;
+  
+  =encoding utf8
+  
+  =head1 NAME
+  
+  Mojolicious::Command::Author::cpanify - CPAN-ify command
+  
+  =head1 SYNOPSIS
+  
+    Usage: APPLICATION cpanify [OPTIONS] [FILE]
+  
+      mojo cpanify -u sri -p secr3t Mojolicious-Plugin-MyPlugin-0.01.tar.gz
+  
+    Options:
+      -h, --help                  Show this summary of available options
+      -p, --password <password>   PAUSE password
+      -u, --user <name>           PAUSE username
+  
+  =head1 DESCRIPTION
+  
+  L<Mojolicious::Command::Author::cpanify> uploads files to CPAN.
+  
+  This is a core command, that means it is always enabled and its code a good
+  example for learning to build new commands, you're welcome to fork it.
+  
+  See L<Mojolicious::Commands/"COMMANDS"> for a list of commands that are
+  available by default.
+  
+  =head1 ATTRIBUTES
+  
+  L<Mojolicious::Command::Author::cpanify> inherits all attributes from
+  L<Mojolicious::Command> and implements the following new ones.
+  
+  =head2 description
+  
+    my $description = $cpanify->description;
+    $cpanify        = $cpanify->description('Foo');
+  
+  Short description of this command, used for the command list.
+  
+  =head2 usage
+  
+    my $usage = $cpanify->usage;
+    $cpanify  = $cpanify->usage('Foo');
+  
+  Usage information for this command, used for the help screen.
+  
+  =head1 METHODS
+  
+  L<Mojolicious::Command::Author::cpanify> inherits all methods from
+  L<Mojolicious::Command> and implements the following new ones.
+  
+  =head2 run
+  
+    $cpanify->run(@ARGV);
+  
+  Run this command.
+  
+  =head1 SEE ALSO
+  
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
+  
+  =cut
+MOJOLICIOUS_COMMAND_AUTHOR_CPANIFY
+
+$fatpacked{"Mojolicious/Command/Author/generate.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_AUTHOR_GENERATE';
+  package Mojolicious::Command::Author::generate;
+  use Mojo::Base 'Mojolicious::Commands';
+  
+  has description => 'Generate files and directories from templates';
+  has hint        => <<EOF;
+  
+  See 'APPLICATION generate help GENERATOR' for more information on a specific
+  generator.
+  EOF
+  has message    => sub { shift->extract_usage . "\nGenerators:\n" };
+  has namespaces => sub { ['Mojolicious::Command::Author::generate'] };
+  
+  sub help { shift->run(@_) }
+  
+  1;
+  
+  =encoding utf8
+  
+  =head1 NAME
+  
+  Mojolicious::Command::Author::generate - Generator command
+  
+  =head1 SYNOPSIS
+  
+    Usage: APPLICATION generate GENERATOR [OPTIONS]
+  
+      mojo generate app
+      mojo generate lite_app
+  
+  =head1 DESCRIPTION
+  
+  L<Mojolicious::Command::Author::generate> lists available generators.
+  
+  This is a core command, that means it is always enabled and its code a good
+  example for learning to build new commands, you're welcome to fork it.
+  
+  See L<Mojolicious::Commands/"COMMANDS"> for a list of commands that are
+  available by default.
+  
+  =head1 ATTRIBUTES
+  
+  L<Mojolicious::Command::Author::generate> inherits all attributes from
+  L<Mojolicious::Commands> and implements the following new ones.
+  
+  =head2 description
+  
+    my $description = $generator->description;
+    $generator      = $generator->description('Foo');
+  
+  Short description of this command, used for the command list.
+  
+  =head2 hint
+  
+    my $hint   = $generator->hint;
+    $generator = $generator->hint('Foo');
+  
+  Short hint shown after listing available generator commands.
+  
+  =head2 message
+  
+    my $msg    = $generator->message;
+    $generator = $generator->message('Bar');
+  
+  Short usage message shown before listing available generator commands.
+  
+  =head2 namespaces
+  
+    my $namespaces = $generator->namespaces;
+    $generator     = $generator->namespaces(['MyApp::Command::generate']);
+  
+  Namespaces to search for available generator commands, defaults to
+  L<Mojolicious::Command::Author::generate>.
+  
+  =head1 METHODS
+  
+  L<Mojolicious::Command::Author::generate> inherits all methods from
+  L<Mojolicious::Commands> and implements the following new ones.
+  
+  =head2 help
+  
+    $generator->help('app');
+  
+  Print usage information for generator command.
+  
+  =head1 SEE ALSO
+  
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
+  
+  =cut
+MOJOLICIOUS_COMMAND_AUTHOR_GENERATE
+
+$fatpacked{"Mojolicious/Command/Author/generate/app.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_AUTHOR_GENERATE_APP';
+  package Mojolicious::Command::Author::generate::app;
+  use Mojo::Base 'Mojolicious::Command';
+  
+  use Mojo::Util qw(class_to_file class_to_path decamelize);
+  
+  has description => 'Generate Mojolicious application directory structure';
+  has usage       => sub { shift->extract_usage };
+  
+  sub run {
+    my ($self, $class) = (shift, shift || 'MyApp');
+  
+    # Script
+    my $name = class_to_file $class;
+    $self->render_to_rel_file('mojo', "$name/script/$name", {class => $class});
+    $self->chmod_rel_file("$name/script/$name", 0744);
+  
+    # Application class
+    my $app = class_to_path $class;
+    $self->render_to_rel_file('appclass', "$name/lib/$app", {class => $class});
+  
+    # Config file (using the default moniker)
+    $self->render_to_rel_file('config', "$name/@{[decamelize $class]}.conf");
+  
+    # Controller
+    my $controller = "${class}::Controller::Example";
+    my $path       = class_to_path $controller;
+    $self->render_to_rel_file('controller', "$name/lib/$path",
+      {class => $controller});
+  
+    # Test
+    $self->render_to_rel_file('test', "$name/t/basic.t", {class => $class});
+  
+    # Static file
+    $self->render_to_rel_file('static', "$name/public/index.html");
+  
+    # Templates
+    $self->render_to_rel_file('layout',
+      "$name/templates/layouts/default.html.ep");
+    $self->render_to_rel_file('welcome',
+      "$name/templates/example/welcome.html.ep");
+  }
+  
+  1;
+  
+  =encoding utf8
+  
+  =head1 NAME
+  
+  Mojolicious::Command::Author::generate::app - App generator command
+  
+  =head1 SYNOPSIS
+  
+    Usage: APPLICATION generate app [OPTIONS] [NAME]
+  
+      mojo generate app
+      mojo generate app TestApp
+  
+    Options:
+      -h, --help   Show this summary of available options
+  
+  =head1 DESCRIPTION
+  
+  L<Mojolicious::Command::Author::generate::app> generates application directory
+  structures for fully functional L<Mojolicious> applications.
+  
+  This is a core command, that means it is always enabled and its code a good
+  example for learning to build new commands, you're welcome to fork it.
+  
+  See L<Mojolicious::Commands/"COMMANDS"> for a list of commands that are
+  available by default.
+  
+  =head1 ATTRIBUTES
+  
+  L<Mojolicious::Command::Author::generate::app> inherits all attributes from
+  L<Mojolicious::Command> and implements the following new ones.
+  
+  =head2 description
+  
+    my $description = $app->description;
+    $app            = $app->description('Foo');
+  
+  Short description of this command, used for the command list.
+  
+  =head2 usage
+  
+    my $usage = $app->usage;
+    $app      = $app->usage('Foo');
+  
+  Usage information for this command, used for the help screen.
+  
+  =head1 METHODS
+  
+  L<Mojolicious::Command::Author::generate::app> inherits all methods from
+  L<Mojolicious::Command> and implements the following new ones.
+  
+  =head2 run
+  
+    $app->run(@ARGV);
+  
+  Run this command.
+  
+  =head1 SEE ALSO
+  
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
+  
+  =cut
+  
+  __DATA__
+  
+  @@ mojo
+  #!/usr/bin/env perl
+  
+  use strict;
+  use warnings;
+  
+  use FindBin;
+  BEGIN { unshift @INC, "$FindBin::Bin/../lib" }
+  use Mojolicious::Commands;
+  
+  # Start command line interface for application
+  Mojolicious::Commands->start_app('<%= $class %>');
+  
+  @@ appclass
+  package <%= $class %>;
+  use Mojo::Base 'Mojolicious';
+  
+  # This method will run once at server start
+  sub startup {
+    my $self = shift;
+  
+    # Load configuration from hash returned by config file
+    my $config = $self->plugin('Config');
+  
+    # Configure the application
+    $self->secrets($config->{secrets});
+  
+    # Router
+    my $r = $self->routes;
+  
+    # Normal route to controller
+    $r->get('/')->to('example#welcome');
+  }
+  
+  1;
+  
+  @@ controller
+  package <%= $class %>;
+  use Mojo::Base 'Mojolicious::Controller';
+  
+  # This action will render a template
+  sub welcome {
+    my $self = shift;
+  
+    # Render template "example/welcome.html.ep" with message
+    $self->render(msg => 'Welcome to the Mojolicious real-time web framework!');
+  }
+  
+  1;
+  
+  @@ static
+  <!DOCTYPE html>
+  <html>
+    <head>
+      <title>Welcome to the Mojolicious real-time web framework!</title>
+    </head>
+    <body>
+      <h2>Welcome to the Mojolicious real-time web framework!</h2>
+      This is the static document "public/index.html",
+      <a href="/">click here</a> to get back to the start.
+    </body>
+  </html>
+  
+  @@ test
+  use Mojo::Base -strict;
+  
+  use Test::More;
+  use Test::Mojo;
+  
+  my $t = Test::Mojo->new('<%= $class %>');
+  $t->get_ok('/')->status_is(200)->content_like(qr/Mojolicious/i);
+  
+  done_testing();
+  
+  @@ layout
+  <!DOCTYPE html>
+  <html>
+    <head><title><%%= title %></title></head>
+    <body><%%= content %></body>
+  </html>
+  
+  @@ welcome
+  %% layout 'default';
+  %% title 'Welcome';
+  <h2><%%= $msg %></h2>
+  <p>
+    This page was generated from the template "templates/example/welcome.html.ep"
+    and the layout "templates/layouts/default.html.ep",
+    <%%= link_to 'click here' => url_for %> to reload the page or
+    <%%= link_to 'here' => '/index.html' %> to move forward to a static page.
+  </p>
+  
+  @@ config
+  % use Mojo::Util qw(sha1_sum steady_time);
+  {
+    secrets => ['<%= sha1_sum $$ . steady_time . rand  %>']
+  }
+MOJOLICIOUS_COMMAND_AUTHOR_GENERATE_APP
+
+$fatpacked{"Mojolicious/Command/Author/generate/lite_app.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_AUTHOR_GENERATE_LITE_APP';
+  package Mojolicious::Command::Author::generate::lite_app;
+  use Mojo::Base 'Mojolicious::Command';
+  
+  has description => 'Generate Mojolicious::Lite application';
+  has usage       => sub { shift->extract_usage };
+  
+  sub run {
+    my ($self, $name) = (shift, shift || 'myapp.pl');
+    $self->render_to_rel_file('liteapp', $name);
+    $self->chmod_rel_file($name, 0744);
+  }
+  
+  1;
+  
+  =encoding utf8
+  
+  =head1 NAME
+  
+  Mojolicious::Command::Author::generate::lite_app - Lite app generator command
+  
+  =head1 SYNOPSIS
+  
+    Usage: APPLICATION generate lite_app [OPTIONS] [NAME]
+  
+      mojo generate lite_app
+      mojo generate lite_app foo.pl
+  
+    Options:
+      -h, --help   Show this summary of available options
+  
+  =head1 DESCRIPTION
+  
+  L<Mojolicious::Command::Author::generate::lite_app> generate fully functional
+  L<Mojolicious::Lite> applications.
+  
+  This is a core command, that means it is always enabled and its code a good
+  example for learning to build new commands, you're welcome to fork it.
+  
+  See L<Mojolicious::Commands/"COMMANDS"> for a list of commands that are
+  available by default.
+  
+  =head1 ATTRIBUTES
+  
+  L<Mojolicious::Command::Author::generate::lite_app> inherits all attributes from
+  L<Mojolicious::Command> and implements the following new ones.
+  
+  =head2 description
+  
+    my $description = $app->description;
+    $app            = $app->description('Foo');
+  
+  Short description of this command, used for the command list.
+  
+  =head2 usage
+  
+    my $usage = $app->usage;
+    $app      = $app->usage('Foo');
+  
+  Usage information for this command, used for the help screen.
+  
+  =head1 METHODS
+  
+  L<Mojolicious::Command::Author::generate::lite_app> inherits all methods from
+  L<Mojolicious::Command> and implements the following new ones.
+  
+  =head2 run
+  
+    $app->run(@ARGV);
+  
+  Run this command.
+  
+  =head1 SEE ALSO
+  
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
+  
+  =cut
+  
+  __DATA__
+  
+  @@ liteapp
+  #!/usr/bin/env perl
+  use Mojolicious::Lite;
+  
+  get '/' => sub {
+    my $c = shift;
+    $c->render(template => 'index');
+  };
+  
+  app->start;
+  <% %>__DATA__
+  
+  <% %>@@ index.html.ep
+  %% layout 'default';
+  %% title 'Welcome';
+  <h1>Welcome to the Mojolicious real-time web framework!</h1>
+  
+  <% %>@@ layouts/default.html.ep
+  <!DOCTYPE html>
+  <html>
+    <head><title><%%= title %></title></head>
+    <body><%%= content %></body>
+  </html>
+MOJOLICIOUS_COMMAND_AUTHOR_GENERATE_LITE_APP
+
+$fatpacked{"Mojolicious/Command/Author/generate/makefile.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_AUTHOR_GENERATE_MAKEFILE';
+  package Mojolicious::Command::Author::generate::makefile;
+  use Mojo::Base 'Mojolicious::Command';
+  
+  has description => 'Generate "Makefile.PL"';
+  has usage       => sub { shift->extract_usage };
+  
+  sub run { shift->render_to_rel_file('makefile', 'Makefile.PL') }
+  
+  1;
+  
+  =encoding utf8
+  
+  =head1 NAME
+  
+  Mojolicious::Command::Author::generate::makefile - Makefile generator command
+  
+  =head1 SYNOPSIS
+  
+    Usage: APPLICATION generate makefile [OPTIONS]
+  
+      mojo generate makefile
+  
+    Options:
+      -h, --help   Show this summary of available options
+  
+  =head1 DESCRIPTION
+  
+  L<Mojolicious::Command::Author::generate::makefile> generates C<Makefile.PL>
+  files for applications.
+  
+  This is a core command, that means it is always enabled and its code a good
+  example for learning to build new commands, you're welcome to fork it.
+  
+  See L<Mojolicious::Commands/"COMMANDS"> for a list of commands that are
+  available by default.
+  
+  =head1 ATTRIBUTES
+  
+  L<Mojolicious::Command::Author::generate::makefile> inherits all attributes from
+  L<Mojolicious::Command> and implements the following new ones.
+  
+  =head2 description
+  
+    my $description = $makefile->description;
+    $makefile       = $makefile->description('Foo');
+  
+  Short description of this command, used for the command list.
+  
+  =head2 usage
+  
+    my $usage = $makefile->usage;
+    $makefile = $makefile->usage('Foo');
+  
+  Usage information for this command, used for the help screen.
+  
+  =head1 METHODS
+  
+  L<Mojolicious::Command::Author::generate::makefile> inherits all methods from
+  L<Mojolicious::Command> and implements the following new ones.
+  
+  =head2 run
+  
+    $makefile->run(@ARGV);
+  
+  Run this command.
+  
+  =head1 SEE ALSO
+  
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
+  
+  =cut
+  
+  __DATA__
+  
+  @@ makefile
+  use strict;
+  use warnings;
+  
+  use ExtUtils::MakeMaker;
+  
+  WriteMakefile(
+    VERSION   => '0.01',
+    PREREQ_PM => {'Mojolicious' => '<%= $Mojolicious::VERSION %>'},
+    test      => {TESTS => 't/*.t'}
+  );
+MOJOLICIOUS_COMMAND_AUTHOR_GENERATE_MAKEFILE
+
+$fatpacked{"Mojolicious/Command/Author/generate/plugin.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_AUTHOR_GENERATE_PLUGIN';
+  package Mojolicious::Command::Author::generate::plugin;
+  use Mojo::Base 'Mojolicious::Command';
+  
+  use Mojo::Util qw(camelize class_to_path getopt);
+  
+  has description => 'Generate Mojolicious plugin directory structure';
+  has usage       => sub { shift->extract_usage };
+  
+  sub run {
+    my ($self, @args) = @_;
+  
+    getopt \@args, 'f|full' => \(my $full);
+  
+    # Class
+    my $name  = $args[0] // 'MyPlugin';
+    my $class = $full ? $name : "Mojolicious::Plugin::$name";
+    my $dir   = join '-', split('::', $class);
+    my $app   = class_to_path $class;
+    $self->render_to_rel_file('class', "$dir/lib/$app",
+      {class => $class, name => $name});
+  
+    # Test
+    $self->render_to_rel_file('test', "$dir/t/basic.t", {name => $name});
+  
+    # Makefile
+    $self->render_to_rel_file('makefile', "$dir/Makefile.PL",
+      {class => $class, path => $app});
+  }
+  
+  1;
+  
+  =encoding utf8
+  
+  =head1 NAME
+  
+  Mojolicious::Command::Author::generate::plugin - Plugin generator command
+  
+  =head1 SYNOPSIS
+  
+    Usage: APPLICATION generate plugin [OPTIONS] [NAME]
+  
+      mojo generate plugin
+      mojo generate plugin TestPlugin
+      mojo generate plugin -f MyApp::Plugin::AwesomeFeature
+  
+    Options:
+      -f, --full   Do not prepend "Mojolicious::Plugin::" to the plugin name
+      -h, --help   Show this summary of available options
+  
+  =head1 DESCRIPTION
+  
+  L<Mojolicious::Command::Author::generate::plugin> generates directory structures
+  for fully functional L<Mojolicious> plugins.
+  
+  This is a core command, that means it is always enabled and its code a good
+  example for learning to build new commands, you're welcome to fork it.
+  
+  See L<Mojolicious::Commands/"COMMANDS"> for a list of commands that are
+  available by default.
+  
+  =head1 ATTRIBUTES
+  
+  L<Mojolicious::Command::Author::generate::plugin> inherits all attributes from
+  L<Mojolicious::Command> and implements the following new ones.
+  
+  =head2 description
+  
+    my $description = $plugin->description;
+    $plugin         = $plugin->description('Foo');
+  
+  Short description of this command, used for the command list.
+  
+  =head2 usage
+  
+    my $usage = $plugin->usage;
+    $plugin   = $plugin->usage('Foo');
+  
+  Usage information for this command, used for the help screen.
+  
+  =head1 METHODS
+  
+  L<Mojolicious::Command::Author::generate::plugin> inherits all methods from
+  L<Mojolicious::Command> and implements the following new ones.
+  
+  =head2 run
+  
+    $plugin->run(@ARGV);
+  
+  Run this command.
+  
+  =head1 SEE ALSO
+  
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
+  
+  =cut
+  
+  __DATA__
+  
+  @@ class
+  package <%= $class %>;
+  use Mojo::Base 'Mojolicious::Plugin';
+  
+  our $VERSION = '0.01';
+  
+  sub register {
+    my ($self, $app) = @_;
+  }
+  
+  1;
+  <% %>__END__
+  
+  <% %>=encoding utf8
+  
+  <% %>=head1 NAME
+  
+  <%= $class %> - Mojolicious Plugin
+  
+  <% %>=head1 SYNOPSIS
+  
+    # Mojolicious
+    $self->plugin('<%= $name %>');
+  
+    # Mojolicious::Lite
+    plugin '<%= $name %>';
+  
+  <% %>=head1 DESCRIPTION
+  
+  L<<%= $class %>> is a L<Mojolicious> plugin.
+  
+  <% %>=head1 METHODS
+  
+  L<<%= $class %>> inherits all methods from
+  L<Mojolicious::Plugin> and implements the following new ones.
+  
+  <% %>=head2 register
+  
+    $plugin->register(Mojolicious->new);
+  
+  Register plugin in L<Mojolicious> application.
+  
+  <% %>=head1 SEE ALSO
+  
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
+  
+  <% %>=cut
+  
+  @@ test
+  use Mojo::Base -strict;
+  
+  use Test::More;
+  use Mojolicious::Lite;
+  use Test::Mojo;
+  
+  plugin '<%= $name %>';
+  
+  get '/' => sub {
+    my $c = shift;
+    $c->render(text => 'Hello Mojo!');
+  };
+  
+  my $t = Test::Mojo->new;
+  $t->get_ok('/')->status_is(200)->content_is('Hello Mojo!');
+  
+  done_testing();
+  
+  @@ makefile
+  use strict;
+  use warnings;
+  
+  use ExtUtils::MakeMaker;
+  
+  WriteMakefile(
+    NAME         => '<%= $class %>',
+    VERSION_FROM => 'lib/<%= $path %>',
+    AUTHOR       => 'A Good Programmer <nospam@cpan.org>',
+    PREREQ_PM    => {'Mojolicious' => '<%= $Mojolicious::VERSION %>'},
+    test         => {TESTS => 't/*.t'}
+  );
+MOJOLICIOUS_COMMAND_AUTHOR_GENERATE_PLUGIN
+
+$fatpacked{"Mojolicious/Command/Author/inflate.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_AUTHOR_INFLATE';
+  package Mojolicious::Command::Author::inflate;
+  use Mojo::Base 'Mojolicious::Command';
+  
+  use Mojo::Loader qw(data_section file_is_binary);
+  use Mojo::Util 'encode';
+  
+  has description => 'Inflate embedded files to real files';
+  has usage       => sub { shift->extract_usage };
+  
+  sub run {
+    my $self = shift;
+  
+    # Find all embedded files
+    my %all;
+    my $app = $self->app;
+    for my $class (@{$app->renderer->classes}, @{$app->static->classes}) {
+      for my $name (keys %{data_section $class}) {
+        my $data = data_section $class, $name;
+        $data = encode 'UTF-8', $data unless file_is_binary $class, $name;
+        $all{$name} = $data;
+      }
+    }
+  
+    # Turn them into real files
+    for my $name (grep {/\.\w+$/} keys %all) {
+      my $prefix = $name =~ /\.\w+\.\w+$/ ? 'templates' : 'public';
+      $self->write_file($self->rel_file("$prefix/$name"), $all{$name});
+    }
+  }
+  
+  1;
+  
+  =encoding utf8
+  
+  =head1 NAME
+  
+  Mojolicious::Command::Author::inflate - Inflate command
+  
+  =head1 SYNOPSIS
+  
+    Usage: APPLICATION inflate [OPTIONS]
+  
+      ./myapp.pl inflate
+  
+    Options:
+      -h, --help          Show this summary of available options
+          --home <path>   Path to home directory of your application, defaults to
+                          the value of MOJO_HOME or auto-detection
+      -m, --mode <name>   Operating mode for your application, defaults to the
+                          value of MOJO_MODE/PLACK_ENV or "development"
+  
+  =head1 DESCRIPTION
+  
+  L<Mojolicious::Command::Author::inflate> turns templates and static files
+  embedded in the C<DATA> sections of your application into real files.
+  
+  This is a core command, that means it is always enabled and its code a good
+  example for learning to build new commands, you're welcome to fork it.
+  
+  See L<Mojolicious::Commands/"COMMANDS"> for a list of commands that are
+  available by default.
+  
+  =head1 ATTRIBUTES
+  
+  L<Mojolicious::Command::Author::inflate> inherits all attributes from
+  L<Mojolicious::Command> and implements the following new ones.
+  
+  =head2 description
+  
+    my $description = $inflate->description;
+    $inflate        = $inflate->description('Foo');
+  
+  Short description of this command, used for the command list.
+  
+  =head2 usage
+  
+    my $usage = $inflate->usage;
+    $inflate  = $inflate->usage('Foo');
+  
+  Usage information for this command, used for the help screen.
+  
+  =head1 METHODS
+  
+  L<Mojolicious::Command::Author::inflate> inherits all methods from
+  L<Mojolicious::Command> and implements the following new ones.
+  
+  =head2 run
+  
+    $inflate->run(@ARGV);
+  
+  Run this command.
+  
+  =head1 SEE ALSO
+  
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
+  
+  =cut
+MOJOLICIOUS_COMMAND_AUTHOR_INFLATE
 
 $fatpacked{"Mojolicious/Command/cgi.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_CGI';
   package Mojolicious::Command::cgi;
@@ -26567,7 +28821,7 @@ $fatpacked{"Mojolicious/Command/cgi.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."
   use Mojo::Util 'getopt';
   
   has description => 'Start application with CGI';
-  has usage => sub { shift->extract_usage };
+  has usage       => sub { shift->extract_usage };
   
   sub run {
     my ($self, @args) = @_;
@@ -26640,116 +28894,10 @@ $fatpacked{"Mojolicious/Command/cgi.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_COMMAND_CGI
-
-$fatpacked{"Mojolicious/Command/cpanify.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_CPANIFY';
-  package Mojolicious::Command::cpanify;
-  use Mojo::Base 'Mojolicious::Command';
-  
-  use Mojo::File 'path';
-  use Mojo::Util 'getopt';
-  
-  has description => 'Upload distribution to CPAN';
-  has usage => sub { shift->extract_usage };
-  
-  sub run {
-    my ($self, @args) = @_;
-  
-    getopt \@args,
-      'p|password=s' => \(my $password = ''),
-      'u|user=s'     => \(my $user     = '');
-    die $self->usage unless my $file = shift @args;
-  
-    my $tx = $self->app->ua->tap(sub { $_->proxy->detect })->post(
-      "https://$user:$password\@pause.perl.org/pause/authenquery" => form => {
-        HIDDENNAME                        => $user,
-        CAN_MULTIPART                     => 1,
-        pause99_add_uri_upload            => path($file)->basename,
-        SUBMIT_pause99_add_uri_httpupload => ' Upload this file from my disk ',
-        pause99_add_uri_uri               => '',
-        pause99_add_uri_httpupload        => {file => $file},
-      }
-    );
-  
-    unless ($tx->success) {
-      my $code = $tx->res->code // 0;
-      my $msg = $tx->error->{message};
-      if    ($code == 401) { $msg = 'Wrong username or password.' }
-      elsif ($code == 409) { $msg = 'File already exists on CPAN.' }
-      die qq{Problem uploading file "$file": $msg\n};
-    }
-  
-    say 'Upload successful!';
-  }
-  
-  1;
-  
-  =encoding utf8
-  
-  =head1 NAME
-  
-  Mojolicious::Command::cpanify - CPAN-ify command
-  
-  =head1 SYNOPSIS
-  
-    Usage: APPLICATION cpanify [OPTIONS] [FILE]
-  
-      mojo cpanify -u sri -p secr3t Mojolicious-Plugin-MyPlugin-0.01.tar.gz
-  
-    Options:
-      -h, --help                  Show this summary of available options
-      -p, --password <password>   PAUSE password
-      -u, --user <name>           PAUSE username
-  
-  =head1 DESCRIPTION
-  
-  L<Mojolicious::Command::cpanify> uploads files to CPAN.
-  
-  This is a core command, that means it is always enabled and its code a good
-  example for learning to build new commands, you're welcome to fork it.
-  
-  See L<Mojolicious::Commands/"COMMANDS"> for a list of commands that are
-  available by default.
-  
-  =head1 ATTRIBUTES
-  
-  L<Mojolicious::Command::cpanify> inherits all attributes from
-  L<Mojolicious::Command> and implements the following new ones.
-  
-  =head2 description
-  
-    my $description = $cpanify->description;
-    $cpanify        = $cpanify->description('Foo');
-  
-  Short description of this command, used for the command list.
-  
-  =head2 usage
-  
-    my $usage = $cpanify->usage;
-    $cpanify  = $cpanify->usage('Foo');
-  
-  Usage information for this command, used for the help screen.
-  
-  =head1 METHODS
-  
-  L<Mojolicious::Command::cpanify> inherits all methods from
-  L<Mojolicious::Command> and implements the following new ones.
-  
-  =head2 run
-  
-    $cpanify->run(@ARGV);
-  
-  Run this command.
-  
-  =head1 SEE ALSO
-  
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
-  
-  =cut
-MOJOLICIOUS_COMMAND_CPANIFY
 
 $fatpacked{"Mojolicious/Command/daemon.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_DAEMON';
   package Mojolicious::Command::daemon;
@@ -26759,7 +28907,7 @@ $fatpacked{"Mojolicious/Command/daemon.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
   use Mojo::Util 'getopt';
   
   has description => 'Start application with HTTP and WebSocket server';
-  has usage => sub { shift->extract_usage };
+  has usage       => sub { shift->extract_usage };
   
   sub run {
     my ($self, @args) = @_;
@@ -26769,9 +28917,9 @@ $fatpacked{"Mojolicious/Command/daemon.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
       'b|backlog=i'            => sub { $daemon->backlog($_[1]) },
       'c|clients=i'            => sub { $daemon->max_clients($_[1]) },
       'i|inactivity-timeout=i' => sub { $daemon->inactivity_timeout($_[1]) },
-      'l|listen=s'   => \my @listen,
-      'p|proxy'      => sub { $daemon->reverse_proxy(1) },
-      'r|requests=i' => sub { $daemon->max_requests($_[1]) };
+      'l|listen=s'             => \my @listen,
+      'p|proxy'                => sub { $daemon->reverse_proxy(1) },
+      'r|requests=i'           => sub { $daemon->max_requests($_[1]) };
   
     $daemon->listen(\@listen) if @listen;
     $daemon->run;
@@ -26861,7 +29009,7 @@ $fatpacked{"Mojolicious/Command/daemon.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_COMMAND_DAEMON
@@ -26870,10 +29018,11 @@ $fatpacked{"Mojolicious/Command/eval.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
   package Mojolicious::Command::eval;
   use Mojo::Base 'Mojolicious::Command';
   
+  use Mojo::Promise;
   use Mojo::Util 'getopt';
   
   has description => 'Run code against application';
-  has usage => sub { shift->extract_usage };
+  has usage       => sub { shift->extract_usage };
   
   sub run {
     my ($self, @args) = @_;
@@ -26882,10 +29031,17 @@ $fatpacked{"Mojolicious/Command/eval.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
     my $code = shift @args || '';
   
     # Run code against application
-    my $app = $self->app;
-    no warnings;
+    my $app    = $self->app;
     my $result = eval "package main; sub app; local *app = sub { \$app }; $code";
-    return $@ ? die $@ : $result unless defined $result && ($v1 || $v2);
+    die $@ if $@;
+  
+    # Handle promises
+    my $err;
+    Mojo::Promise->resolve($result)
+      ->then(sub { $result = shift }, sub { $err = shift })->wait;
+    die $err if $err;
+  
+    return $result unless defined $result && ($v1 || $v2);
     $v2 ? print($app->dumper($result)) : say $result;
   }
   
@@ -26917,7 +29073,9 @@ $fatpacked{"Mojolicious/Command/eval.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
   
   =head1 DESCRIPTION
   
-  L<Mojolicious::Command::eval> runs code against applications.
+  L<Mojolicious::Command::eval> runs code against applications. If the result is a
+  promise (then-able), it will wait until the promise is fulfilled or rejected and
+  the result is returned.
   
   This is a core command, that means it is always enabled and its code a good
   example for learning to build new commands, you're welcome to fork it.
@@ -26957,707 +29115,10 @@ $fatpacked{"Mojolicious/Command/eval.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_COMMAND_EVAL
-
-$fatpacked{"Mojolicious/Command/generate.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_GENERATE';
-  package Mojolicious::Command::generate;
-  use Mojo::Base 'Mojolicious::Commands';
-  
-  has description => 'Generate files and directories from templates';
-  has hint        => <<EOF;
-  
-  See 'APPLICATION generate help GENERATOR' for more information on a specific
-  generator.
-  EOF
-  has message    => sub { shift->extract_usage . "\nGenerators:\n" };
-  has namespaces => sub { ['Mojolicious::Command::generate'] };
-  
-  sub help { shift->run(@_) }
-  
-  1;
-  
-  =encoding utf8
-  
-  =head1 NAME
-  
-  Mojolicious::Command::generate - Generator command
-  
-  =head1 SYNOPSIS
-  
-    Usage: APPLICATION generate GENERATOR [OPTIONS]
-  
-      mojo generate app
-      mojo generate lite_app
-  
-  =head1 DESCRIPTION
-  
-  L<Mojolicious::Command::generate> lists available generators.
-  
-  This is a core command, that means it is always enabled and its code a good
-  example for learning to build new commands, you're welcome to fork it.
-  
-  See L<Mojolicious::Commands/"COMMANDS"> for a list of commands that are
-  available by default.
-  
-  =head1 ATTRIBUTES
-  
-  L<Mojolicious::Command::generate> inherits all attributes from
-  L<Mojolicious::Commands> and implements the following new ones.
-  
-  =head2 description
-  
-    my $description = $generator->description;
-    $generator      = $generator->description('Foo');
-  
-  Short description of this command, used for the command list.
-  
-  =head2 hint
-  
-    my $hint   = $generator->hint;
-    $generator = $generator->hint('Foo');
-  
-  Short hint shown after listing available generator commands.
-  
-  =head2 message
-  
-    my $msg    = $generator->message;
-    $generator = $generator->message('Bar');
-  
-  Short usage message shown before listing available generator commands.
-  
-  =head2 namespaces
-  
-    my $namespaces = $generator->namespaces;
-    $generator     = $generator->namespaces(['MyApp::Command::generate']);
-  
-  Namespaces to search for available generator commands, defaults to
-  L<Mojolicious::Command::generate>.
-  
-  =head1 METHODS
-  
-  L<Mojolicious::Command::generate> inherits all methods from
-  L<Mojolicious::Commands> and implements the following new ones.
-  
-  =head2 help
-  
-    $generator->help('app');
-  
-  Print usage information for generator command.
-  
-  =head1 SEE ALSO
-  
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
-  
-  =cut
-MOJOLICIOUS_COMMAND_GENERATE
-
-$fatpacked{"Mojolicious/Command/generate/app.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_GENERATE_APP';
-  package Mojolicious::Command::generate::app;
-  use Mojo::Base 'Mojolicious::Command';
-  
-  use Mojo::Util qw(class_to_file class_to_path decamelize);
-  
-  has description => 'Generate Mojolicious application directory structure';
-  has usage => sub { shift->extract_usage };
-  
-  sub run {
-    my ($self, $class) = @_;
-    $class ||= 'MyApp';
-  
-    # Prevent bad applications
-    die <<EOF unless $class =~ /^[A-Z](?:\w|::)+$/;
-  Your application name has to be a well formed (CamelCase) Perl module name
-  like "MyApp".
-  EOF
-  
-    # Script
-    my $name = class_to_file $class;
-    $self->render_to_rel_file('mojo', "$name/script/$name", $class);
-    $self->chmod_rel_file("$name/script/$name", 0744);
-  
-    # Application class
-    my $app = class_to_path $class;
-    $self->render_to_rel_file('appclass', "$name/lib/$app", $class);
-  
-    # Config file (using the default moniker)
-    $self->render_to_rel_file('config', "$name/@{[decamelize $class]}.conf");
-  
-    # Controller
-    my $controller = "${class}::Controller::Example";
-    my $path       = class_to_path $controller;
-    $self->render_to_rel_file('controller', "$name/lib/$path", $controller);
-  
-    # Test
-    $self->render_to_rel_file('test', "$name/t/basic.t", $class);
-  
-    # Static file
-    $self->render_to_rel_file('static', "$name/public/index.html");
-  
-    # Templates
-    $self->render_to_rel_file('layout',
-      "$name/templates/layouts/default.html.ep");
-    $self->render_to_rel_file('welcome',
-      "$name/templates/example/welcome.html.ep");
-  }
-  
-  1;
-  
-  =encoding utf8
-  
-  =head1 NAME
-  
-  Mojolicious::Command::generate::app - App generator command
-  
-  =head1 SYNOPSIS
-  
-    Usage: APPLICATION generate app [OPTIONS] [NAME]
-  
-      mojo generate app
-      mojo generate app TestApp
-  
-    Options:
-      -h, --help   Show this summary of available options
-  
-  =head1 DESCRIPTION
-  
-  L<Mojolicious::Command::generate::app> generates application directory
-  structures for fully functional L<Mojolicious> applications.
-  
-  This is a core command, that means it is always enabled and its code a good
-  example for learning to build new commands, you're welcome to fork it.
-  
-  See L<Mojolicious::Commands/"COMMANDS"> for a list of commands that are
-  available by default.
-  
-  =head1 ATTRIBUTES
-  
-  L<Mojolicious::Command::generate::app> inherits all attributes from
-  L<Mojolicious::Command> and implements the following new ones.
-  
-  =head2 description
-  
-    my $description = $app->description;
-    $app            = $app->description('Foo');
-  
-  Short description of this command, used for the command list.
-  
-  =head2 usage
-  
-    my $usage = $app->usage;
-    $app      = $app->usage('Foo');
-  
-  Usage information for this command, used for the help screen.
-  
-  =head1 METHODS
-  
-  L<Mojolicious::Command::generate::app> inherits all methods from
-  L<Mojolicious::Command> and implements the following new ones.
-  
-  =head2 run
-  
-    $app->run(@ARGV);
-  
-  Run this command.
-  
-  =head1 SEE ALSO
-  
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
-  
-  =cut
-  
-  __DATA__
-  
-  @@ mojo
-  % my $class = shift;
-  #!/usr/bin/env perl
-  
-  use strict;
-  use warnings;
-  
-  use FindBin;
-  BEGIN { unshift @INC, "$FindBin::Bin/../lib" }
-  use Mojolicious::Commands;
-  
-  # Start command line interface for application
-  Mojolicious::Commands->start_app('<%= $class %>');
-  
-  @@ appclass
-  % my $class = shift;
-  package <%= $class %>;
-  use Mojo::Base 'Mojolicious';
-  
-  # This method will run once at server start
-  sub startup {
-    my $self = shift;
-  
-    # Load configuration from hash returned by "my_app.conf"
-    my $config = $self->plugin('Config');
-  
-    # Documentation browser under "/perldoc"
-    $self->plugin('PODRenderer') if $config->{perldoc};
-  
-    # Router
-    my $r = $self->routes;
-  
-    # Normal route to controller
-    $r->get('/')->to('example#welcome');
-  }
-  
-  1;
-  
-  @@ controller
-  % my $class = shift;
-  package <%= $class %>;
-  use Mojo::Base 'Mojolicious::Controller';
-  
-  # This action will render a template
-  sub welcome {
-    my $self = shift;
-  
-    # Render template "example/welcome.html.ep" with message
-    $self->render(msg => 'Welcome to the Mojolicious real-time web framework!');
-  }
-  
-  1;
-  
-  @@ static
-  <!DOCTYPE html>
-  <html>
-    <head>
-      <title>Welcome to the Mojolicious real-time web framework!</title>
-    </head>
-    <body>
-      <h2>Welcome to the Mojolicious real-time web framework!</h2>
-      This is the static document "public/index.html",
-      <a href="/">click here</a> to get back to the start.
-    </body>
-  </html>
-  
-  @@ test
-  % my $class = shift;
-  use Mojo::Base -strict;
-  
-  use Test::More;
-  use Test::Mojo;
-  
-  my $t = Test::Mojo->new('<%= $class %>');
-  $t->get_ok('/')->status_is(200)->content_like(qr/Mojolicious/i);
-  
-  done_testing();
-  
-  @@ layout
-  <!DOCTYPE html>
-  <html>
-    <head><title><%%= title %></title></head>
-    <body><%%= content %></body>
-  </html>
-  
-  @@ welcome
-  %% layout 'default';
-  %% title 'Welcome';
-  <h2><%%= $msg %></h2>
-  <p>
-    This page was generated from the template "templates/example/welcome.html.ep"
-    and the layout "templates/layouts/default.html.ep",
-    <%%= link_to 'click here' => url_for %> to reload the page or
-    <%%= link_to 'here' => '/index.html' %> to move forward to a static page.
-    %% if (config 'perldoc') {
-      To learn more, you can also browse through the documentation
-      <%%= link_to 'here' => '/perldoc' %>.
-    %% }
-  </p>
-  
-  @@ config
-  % use Mojo::Util qw(sha1_sum steady_time);
-  {
-    perldoc => 1,
-    secrets => ['<%= sha1_sum $$ . steady_time . rand  %>']
-  }
-MOJOLICIOUS_COMMAND_GENERATE_APP
-
-$fatpacked{"Mojolicious/Command/generate/lite_app.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_GENERATE_LITE_APP';
-  package Mojolicious::Command::generate::lite_app;
-  use Mojo::Base 'Mojolicious::Command';
-  
-  has description => 'Generate Mojolicious::Lite application';
-  has usage => sub { shift->extract_usage };
-  
-  sub run {
-    my ($self, $name) = @_;
-    $name ||= 'myapp.pl';
-    $self->render_to_rel_file('liteapp', $name);
-    $self->chmod_rel_file($name, 0744);
-  }
-  
-  1;
-  
-  =encoding utf8
-  
-  =head1 NAME
-  
-  Mojolicious::Command::generate::lite_app - Lite app generator command
-  
-  =head1 SYNOPSIS
-  
-    Usage: APPLICATION generate lite_app [OPTIONS] [NAME]
-  
-      mojo generate lite_app
-      mojo generate lite_app foo.pl
-  
-    Options:
-      -h, --help   Show this summary of available options
-  
-  =head1 DESCRIPTION
-  
-  L<Mojolicious::Command::generate::lite_app> generate fully functional
-  L<Mojolicious::Lite> applications.
-  
-  This is a core command, that means it is always enabled and its code a good
-  example for learning to build new commands, you're welcome to fork it.
-  
-  See L<Mojolicious::Commands/"COMMANDS"> for a list of commands that are
-  available by default.
-  
-  =head1 ATTRIBUTES
-  
-  L<Mojolicious::Command::generate::lite_app> inherits all attributes from
-  L<Mojolicious::Command> and implements the following new ones.
-  
-  =head2 description
-  
-    my $description = $app->description;
-    $app            = $app->description('Foo');
-  
-  Short description of this command, used for the command list.
-  
-  =head2 usage
-  
-    my $usage = $app->usage;
-    $app      = $app->usage('Foo');
-  
-  Usage information for this command, used for the help screen.
-  
-  =head1 METHODS
-  
-  L<Mojolicious::Command::generate::lite_app> inherits all methods from
-  L<Mojolicious::Command> and implements the following new ones.
-  
-  =head2 run
-  
-    $app->run(@ARGV);
-  
-  Run this command.
-  
-  =head1 SEE ALSO
-  
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
-  
-  =cut
-  
-  __DATA__
-  
-  @@ liteapp
-  #!/usr/bin/env perl
-  use Mojolicious::Lite;
-  
-  # Documentation browser under "/perldoc"
-  plugin 'PODRenderer';
-  
-  get '/' => sub {
-    my $c = shift;
-    $c->render(template => 'index');
-  };
-  
-  app->start;
-  <% %>__DATA__
-  
-  <% %>@@ index.html.ep
-  %% layout 'default';
-  %% title 'Welcome';
-  <h1>Welcome to the Mojolicious real-time web framework!</h1>
-  To learn more, you can browse through the documentation
-  <%%= link_to 'here' => '/perldoc' %>.
-  
-  <% %>@@ layouts/default.html.ep
-  <!DOCTYPE html>
-  <html>
-    <head><title><%%= title %></title></head>
-    <body><%%= content %></body>
-  </html>
-MOJOLICIOUS_COMMAND_GENERATE_LITE_APP
-
-$fatpacked{"Mojolicious/Command/generate/makefile.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_GENERATE_MAKEFILE';
-  package Mojolicious::Command::generate::makefile;
-  use Mojo::Base 'Mojolicious::Command';
-  
-  use Mojolicious;
-  
-  has description => 'Generate "Makefile.PL"';
-  has usage => sub { shift->extract_usage };
-  
-  sub run { shift->render_to_rel_file('makefile', 'Makefile.PL') }
-  
-  1;
-  
-  =encoding utf8
-  
-  =head1 NAME
-  
-  Mojolicious::Command::generate::makefile - Makefile generator command
-  
-  =head1 SYNOPSIS
-  
-    Usage: APPLICATION generate makefile [OPTIONS]
-  
-      mojo generate makefile
-  
-    Options:
-      -h, --help   Show this summary of available options
-  
-  =head1 DESCRIPTION
-  
-  L<Mojolicious::Command::generate::makefile> generates C<Makefile.PL> files for
-  applications.
-  
-  This is a core command, that means it is always enabled and its code a good
-  example for learning to build new commands, you're welcome to fork it.
-  
-  See L<Mojolicious::Commands/"COMMANDS"> for a list of commands that are
-  available by default.
-  
-  =head1 ATTRIBUTES
-  
-  L<Mojolicious::Command::generate::makefile> inherits all attributes from
-  L<Mojolicious::Command> and implements the following new ones.
-  
-  =head2 description
-  
-    my $description = $makefile->description;
-    $makefile       = $makefile->description('Foo');
-  
-  Short description of this command, used for the command list.
-  
-  =head2 usage
-  
-    my $usage = $makefile->usage;
-    $makefile = $makefile->usage('Foo');
-  
-  Usage information for this command, used for the help screen.
-  
-  =head1 METHODS
-  
-  L<Mojolicious::Command::generate::makefile> inherits all methods from
-  L<Mojolicious::Command> and implements the following new ones.
-  
-  =head2 run
-  
-    $makefile->run(@ARGV);
-  
-  Run this command.
-  
-  =head1 SEE ALSO
-  
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
-  
-  =cut
-  
-  __DATA__
-  
-  @@ makefile
-  use strict;
-  use warnings;
-  
-  use ExtUtils::MakeMaker;
-  
-  WriteMakefile(
-    VERSION   => '0.01',
-    PREREQ_PM => {'Mojolicious' => '<%= $Mojolicious::VERSION %>'},
-    test      => {TESTS => 't/*.t'}
-  );
-MOJOLICIOUS_COMMAND_GENERATE_MAKEFILE
-
-$fatpacked{"Mojolicious/Command/generate/plugin.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_GENERATE_PLUGIN';
-  package Mojolicious::Command::generate::plugin;
-  use Mojo::Base 'Mojolicious::Command';
-  
-  use Mojo::Util qw(camelize class_to_path);
-  use Mojolicious;
-  
-  has description => 'Generate Mojolicious plugin directory structure';
-  has usage => sub { shift->extract_usage };
-  
-  sub run {
-    my ($self, $name) = @_;
-    $name ||= 'MyPlugin';
-  
-    # Class
-    my $class = $name =~ /^[a-z]/ ? camelize $name : $name;
-    $class = "Mojolicious::Plugin::$class";
-    my $app = class_to_path $class;
-    my $dir = join '-', split('::', $class);
-    $self->render_to_rel_file('class', "$dir/lib/$app", $class, $name);
-  
-    # Test
-    $self->render_to_rel_file('test', "$dir/t/basic.t", $name);
-  
-    # Makefile
-    $self->render_to_rel_file('makefile', "$dir/Makefile.PL", $class, $app);
-  }
-  
-  1;
-  
-  =encoding utf8
-  
-  =head1 NAME
-  
-  Mojolicious::Command::generate::plugin - Plugin generator command
-  
-  =head1 SYNOPSIS
-  
-    Usage: APPLICATION generate plugin [OPTIONS] [NAME]
-  
-      mojo generate plugin
-      mojo generate plugin TestPlugin
-  
-    Options:
-      -h, --help   Show this summary of available options
-  
-  =head1 DESCRIPTION
-  
-  L<Mojolicious::Command::generate::plugin> generates directory structures for
-  fully functional L<Mojolicious> plugins.
-  
-  This is a core command, that means it is always enabled and its code a good
-  example for learning to build new commands, you're welcome to fork it.
-  
-  See L<Mojolicious::Commands/"COMMANDS"> for a list of commands that are
-  available by default.
-  
-  =head1 ATTRIBUTES
-  
-  L<Mojolicious::Command::generate::plugin> inherits all attributes from
-  L<Mojolicious::Command> and implements the following new ones.
-  
-  =head2 description
-  
-    my $description = $plugin->description;
-    $plugin         = $plugin->description('Foo');
-  
-  Short description of this command, used for the command list.
-  
-  =head2 usage
-  
-    my $usage = $plugin->usage;
-    $plugin   = $plugin->usage('Foo');
-  
-  Usage information for this command, used for the help screen.
-  
-  =head1 METHODS
-  
-  L<Mojolicious::Command::generate::plugin> inherits all methods from
-  L<Mojolicious::Command> and implements the following new ones.
-  
-  =head2 run
-  
-    $plugin->run(@ARGV);
-  
-  Run this command.
-  
-  =head1 SEE ALSO
-  
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
-  
-  =cut
-  
-  __DATA__
-  
-  @@ class
-  % my ($class, $name) = @_;
-  package <%= $class %>;
-  use Mojo::Base 'Mojolicious::Plugin';
-  
-  our $VERSION = '0.01';
-  
-  sub register {
-    my ($self, $app) = @_;
-  }
-  
-  1;
-  <% %>__END__
-  
-  <% %>=encoding utf8
-  
-  <% %>=head1 NAME
-  
-  <%= $class %> - Mojolicious Plugin
-  
-  <% %>=head1 SYNOPSIS
-  
-    # Mojolicious
-    $self->plugin('<%= $name %>');
-  
-    # Mojolicious::Lite
-    plugin '<%= $name %>';
-  
-  <% %>=head1 DESCRIPTION
-  
-  L<<%= $class %>> is a L<Mojolicious> plugin.
-  
-  <% %>=head1 METHODS
-  
-  L<<%= $class %>> inherits all methods from
-  L<Mojolicious::Plugin> and implements the following new ones.
-  
-  <% %>=head2 register
-  
-    $plugin->register(Mojolicious->new);
-  
-  Register plugin in L<Mojolicious> application.
-  
-  <% %>=head1 SEE ALSO
-  
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
-  
-  <% %>=cut
-  
-  @@ test
-  % my $name = shift;
-  use Mojo::Base -strict;
-  
-  use Test::More;
-  use Mojolicious::Lite;
-  use Test::Mojo;
-  
-  plugin '<%= $name %>';
-  
-  get '/' => sub {
-    my $c = shift;
-    $c->render(text => 'Hello Mojo!');
-  };
-  
-  my $t = Test::Mojo->new;
-  $t->get_ok('/')->status_is(200)->content_is('Hello Mojo!');
-  
-  done_testing();
-  
-  @@ makefile
-  % my ($class, $path) = @_;
-  use strict;
-  use warnings;
-  
-  use ExtUtils::MakeMaker;
-  
-  WriteMakefile(
-    NAME         => '<%= $class %>',
-    VERSION_FROM => 'lib/<%= $path %>',
-    AUTHOR       => 'A Good Programmer <nospam@cpan.org>',
-    PREREQ_PM    => {'Mojolicious' => '<%= $Mojolicious::VERSION %>'},
-    test         => {TESTS => 't/*.t'}
-  );
-MOJOLICIOUS_COMMAND_GENERATE_PLUGIN
 
 $fatpacked{"Mojolicious/Command/get.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_GET';
   package Mojolicious::Command::get;
@@ -27665,20 +29126,21 @@ $fatpacked{"Mojolicious/Command/get.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."
   
   use Mojo::DOM;
   use Mojo::IOLoop;
-  use Mojo::JSON qw(encode_json j);
+  use Mojo::JSON qw(to_json j);
   use Mojo::JSON::Pointer;
+  use Mojo::URL;
   use Mojo::UserAgent;
   use Mojo::Util qw(decode encode getopt);
   use Scalar::Util 'weaken';
   
   has description => 'Perform HTTP request';
-  has usage => sub { shift->extract_usage };
+  has usage       => sub { shift->extract_usage };
   
   sub run {
     my ($self, @args) = @_;
   
     # Data from STDIN
-    vec(my $r, fileno(STDIN), 1) = 1;
+    vec(my $r = '', fileno(STDIN), 1) = 1;
     my $in = !-t STDIN && select($r, undef, undef, 0) ? join '', <STDIN> : undef;
   
     my $ua = Mojo::UserAgent->new(ioloop => Mojo::IOLoop->singleton);
@@ -27689,11 +29151,13 @@ $fatpacked{"Mojolicious/Command/get.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."
       'f|form=s'    => sub { _form(\%form) if $_[1] =~ /^(.+)=(\@?)(.+)$/ },
       'H|header=s'  => \my @headers,
       'i|inactivity-timeout=i' => sub { $ua->inactivity_timeout($_[1]) },
-      'M|method=s' => \(my $method = 'GET'),
-      'o|connect-timeout=i' => sub { $ua->connect_timeout($_[1]) },
-      'r|redirect'          => \my $redirect,
-      'S|response-size=i'   => sub { $ua->max_response_size($_[1]) },
-      'v|verbose'           => \my $verbose;
+      'k|insecure'             => sub { $ua->insecure(1) },
+      'M|method=s'             => \(my $method = 'GET'),
+      'o|connect-timeout=i'    => sub { $ua->connect_timeout($_[1]) },
+      'r|redirect'             => \my $redirect,
+      'S|response-size=i'      => sub { $ua->max_response_size($_[1]) },
+      'u|user=s'               => \my $user,
+      'v|verbose'              => \my $verbose;
   
     @args = map { decode 'UTF-8', $_ } @args;
     die $self->usage unless my $url = shift @args;
@@ -27704,6 +29168,7 @@ $fatpacked{"Mojolicious/Command/get.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."
   
     # Detect proxy for absolute URLs
     $url !~ m!^/! ? $ua->proxy->detect : $ua->server->app($self->app);
+    $url = Mojo::URL->new($url)->userinfo($user) if $user;
     $ua->max_redirects(10) if $redirect;
   
     my $buffer = '';
@@ -27731,11 +29196,11 @@ $fatpacked{"Mojolicious/Command/get.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."
     $verbose = 1 if $method eq 'HEAD';
     STDOUT->autoflush(1);
     my @content = %form ? (form => \%form) : defined $in ? ($in) : ();
-    my $tx = $ua->start($ua->build_tx($method, $url, \%headers, @content));
-    my $res = $tx->result;
+    my $tx      = $ua->start($ua->build_tx($method, $url, \%headers, @content));
+    my $res     = $tx->result;
   
     # JSON Pointer
-    return unless defined $selector;
+    return undef unless defined $selector;
     return _json($buffer, $selector) if !length $selector || $selector =~ m!^/!;
   
     # Selector
@@ -27750,8 +29215,7 @@ $fatpacked{"Mojolicious/Command/get.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."
   sub _json {
     return unless my $data = j(shift);
     return unless defined($data = Mojo::JSON::Pointer->new($data)->get(shift));
-    return _say($data) unless ref $data eq 'HASH' || ref $data eq 'ARRAY';
-    say encode_json($data);
+    _say(ref $data eq 'HASH' || ref $data eq 'ARRAY' ? to_json($data) : $data);
   }
   
   sub _say { length && say encode('UTF-8', $_) for @_ }
@@ -27804,6 +29268,7 @@ $fatpacked{"Mojolicious/Command/get.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."
       mojo get mojolicious.org
       mojo get -v -r -o 25 -i 50 google.com
       mojo get -v -H 'Host: mojolicious.org' -H 'Accept: */*' mojolicious.org
+      mojo get -u 'sri:s3cret' https://mojolicious.org
       mojo get mojolicious.org > example.html
       mojo get -M PUT mojolicious.org < example.html
       mojo get -f 'q=Mojolicious' -f 'size=5' https://metacpan.org/search
@@ -27829,6 +29294,8 @@ $fatpacked{"Mojolicious/Command/get.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."
                                            MOJO_HOME or auto-detection
       -i, --inactivity-timeout <seconds>   Inactivity timeout, defaults to the
                                            value of MOJO_INACTIVITY_TIMEOUT or 20
+      -k, --insecure                       Do not require a valid TLS certificate
+                                           to access HTTPS sites
       -M, --method <method>                HTTP method to use, defaults to "GET"
       -m, --mode <name>                    Operating mode for your application,
                                            defaults to the value of
@@ -27838,13 +29305,15 @@ $fatpacked{"Mojolicious/Command/get.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."
       -r, --redirect                       Follow up to 10 redirects
       -S, --response-size <size>           Maximum response size in bytes,
                                            defaults to 2147483648 (2GiB)
+      -u, --user <userinfo>                Alternate mechanism for specifying
+                                           colon-separated username and password
       -v, --verbose                        Print request and response headers to
                                            STDERR
   
   =head1 DESCRIPTION
   
-  L<Mojolicious::Command::get> is a command line interface for
-  L<Mojo::UserAgent>.
+  L<Mojolicious::Command::get> performs requests to remote hosts or local
+  applications.
   
   This is a core command, that means it is always enabled and its code a good
   example for learning to build new commands, you're welcome to fork it.
@@ -27854,8 +29323,8 @@ $fatpacked{"Mojolicious/Command/get.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."
   
   =head1 ATTRIBUTES
   
-  L<Mojolicious::Command::get> performs requests to remote hosts or local
-  applications.
+  L<Mojolicious::Command::get> inherits all attributes from
+  L<Mojolicious::Command> and implements the following new ones.
   
   =head2 description
   
@@ -27884,110 +29353,10 @@ $fatpacked{"Mojolicious/Command/get.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_COMMAND_GET
-
-$fatpacked{"Mojolicious/Command/inflate.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_INFLATE';
-  package Mojolicious::Command::inflate;
-  use Mojo::Base 'Mojolicious::Command';
-  
-  use Mojo::Loader qw(data_section file_is_binary);
-  use Mojo::Util 'encode';
-  
-  has description => 'Inflate embedded files to real files';
-  has usage => sub { shift->extract_usage };
-  
-  sub run {
-    my $self = shift;
-  
-    # Find all embedded files
-    my %all;
-    my $app = $self->app;
-    for my $class (@{$app->renderer->classes}, @{$app->static->classes}) {
-      for my $name (keys %{data_section $class}) {
-        my $data = data_section $class, $name;
-        $data = encode 'UTF-8', $data unless file_is_binary $class, $name;
-        $all{$name} = $data;
-      }
-    }
-  
-    # Turn them into real files
-    for my $name (grep {/\.\w+$/} keys %all) {
-      my $prefix = $name =~ /\.\w+\.\w+$/ ? 'templates' : 'public';
-      $self->write_file($self->rel_file("$prefix/$name"), $all{$name});
-    }
-  }
-  
-  1;
-  
-  =encoding utf8
-  
-  =head1 NAME
-  
-  Mojolicious::Command::inflate - Inflate command
-  
-  =head1 SYNOPSIS
-  
-    Usage: APPLICATION inflate [OPTIONS]
-  
-      ./myapp.pl inflate
-  
-    Options:
-      -h, --help          Show this summary of available options
-          --home <path>   Path to home directory of your application, defaults to
-                          the value of MOJO_HOME or auto-detection
-      -m, --mode <name>   Operating mode for your application, defaults to the
-                          value of MOJO_MODE/PLACK_ENV or "development"
-  
-  =head1 DESCRIPTION
-  
-  L<Mojolicious::Command::inflate> turns templates and static files embedded in
-  the C<DATA> sections of your application into real files.
-  
-  This is a core command, that means it is always enabled and its code a good
-  example for learning to build new commands, you're welcome to fork it.
-  
-  See L<Mojolicious::Commands/"COMMANDS"> for a list of commands that are
-  available by default.
-  
-  =head1 ATTRIBUTES
-  
-  L<Mojolicious::Command::inflate> inherits all attributes from
-  L<Mojolicious::Command> and implements the following new ones.
-  
-  =head2 description
-  
-    my $description = $inflate->description;
-    $inflate        = $inflate->description('Foo');
-  
-  Short description of this command, used for the command list.
-  
-  =head2 usage
-  
-    my $usage = $inflate->usage;
-    $inflate  = $inflate->usage('Foo');
-  
-  Usage information for this command, used for the help screen.
-  
-  =head1 METHODS
-  
-  L<Mojolicious::Command::inflate> inherits all methods from
-  L<Mojolicious::Command> and implements the following new ones.
-  
-  =head2 run
-  
-    $inflate->run(@ARGV);
-  
-  Run this command.
-  
-  =head1 SEE ALSO
-  
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
-  
-  =cut
-MOJOLICIOUS_COMMAND_INFLATE
 
 $fatpacked{"Mojolicious/Command/prefork.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_PREFORK';
   package Mojolicious::Command::prefork;
@@ -28012,12 +29381,12 @@ $fatpacked{"Mojolicious/Command/prefork.pm"} = '#line '.(1+__LINE__).' "'.__FILE
       'I|heartbeat-interval=i' => sub { $prefork->heartbeat_interval($_[1]) },
       'H|heartbeat-timeout=i'  => sub { $prefork->heartbeat_timeout($_[1]) },
       'i|inactivity-timeout=i' => sub { $prefork->inactivity_timeout($_[1]) },
-      'l|listen=s'   => \my @listen,
-      'P|pid-file=s' => sub { $prefork->pid_file($_[1]) },
-      'p|proxy'      => sub { $prefork->reverse_proxy(1) },
-      'r|requests=i' => sub { $prefork->max_requests($_[1]) },
-      's|spare=i'    => sub { $prefork->spare($_[1]) },
-      'w|workers=i'  => sub { $prefork->workers($_[1]) };
+      'l|listen=s'             => \my @listen,
+      'P|pid-file=s'           => sub { $prefork->pid_file($_[1]) },
+      'p|proxy'                => sub { $prefork->reverse_proxy(1) },
+      'r|requests=i'           => sub { $prefork->max_requests($_[1]) },
+      's|spare=i'              => sub { $prefork->spare($_[1]) },
+      'w|workers=i'            => sub { $prefork->workers($_[1]) };
   
     $prefork->listen(\@listen) if @listen;
     $prefork->run;
@@ -28117,7 +29486,7 @@ $fatpacked{"Mojolicious/Command/prefork.pm"} = '#line '.(1+__LINE__).' "'.__FILE
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_COMMAND_PREFORK
@@ -28129,7 +29498,7 @@ $fatpacked{"Mojolicious/Command/psgi.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
   use Mojo::Server::PSGI;
   
   has description => 'Start application with PSGI';
-  has usage => sub { shift->extract_usage };
+  has usage       => sub { shift->extract_usage };
   
   sub run { Mojo::Server::PSGI->new(app => shift->app)->to_psgi_app }
   
@@ -28197,7 +29566,7 @@ $fatpacked{"Mojolicious/Command/psgi.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_COMMAND_PSGI
@@ -28210,7 +29579,7 @@ $fatpacked{"Mojolicious/Command/routes.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
   use Mojo::Util qw(encode getopt tablify);
   
   has description => 'Show available routes';
-  has usage => sub { shift->extract_usage };
+  has usage       => sub { shift->extract_usage };
   
   sub run {
     my ($self, @args) = @_;
@@ -28322,103 +29691,10 @@ $fatpacked{"Mojolicious/Command/routes.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_COMMAND_ROUTES
-
-$fatpacked{"Mojolicious/Command/test.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_TEST';
-  package Mojolicious::Command::test;
-  use Mojo::Base 'Mojolicious::Command';
-  
-  use Mojo::Util 'getopt';
-  
-  has description => 'Run tests';
-  has usage => sub { shift->extract_usage };
-  
-  sub run {
-    my ($self, @args) = @_;
-  
-    getopt \@args, 'v|verbose' => \$ENV{HARNESS_VERBOSE};
-  
-    if (!@args && (my $tests = $self->app->home->child('t'))) {
-      die "Can't find test directory.\n" unless -d $tests;
-      @args = $tests->list_tree->grep(qr/\.t$/)->map('to_string')->each;
-      say qq{Running tests from "$tests".};
-    }
-  
-    $ENV{HARNESS_OPTIONS} //= 'c';
-    require Test::Harness;
-    local $Test::Harness::switches = '';
-    Test::Harness::runtests(sort @args);
-  }
-  
-  1;
-  
-  =encoding utf8
-  
-  =head1 NAME
-  
-  Mojolicious::Command::test - Test command
-  
-  =head1 SYNOPSIS
-  
-    Usage: APPLICATION test [OPTIONS] [TESTS]
-  
-      ./myapp.pl test
-      ./myapp.pl test t/foo.t
-      ./myapp.pl test -v t/foo/*.t
-  
-    Options:
-      -h, --help      Show this summary of available options
-      -v, --verbose   Print verbose debug information to STDERR
-  
-  =head1 DESCRIPTION
-  
-  L<Mojolicious::Command::test> runs application tests from the C<t> directory.
-  
-  This is a core command, that means it is always enabled and its code a good
-  example for learning to build new commands, you're welcome to fork it.
-  
-  See L<Mojolicious::Commands/"COMMANDS"> for a list of commands that are
-  available by default.
-  
-  =head1 ATTRIBUTES
-  
-  L<Mojolicious::Command::test> inherits all attributes from
-  L<Mojolicious::Command> and implements the following new ones.
-  
-  =head2 description
-  
-    my $description = $test->description;
-    $test           = $test->description('Foo');
-  
-  Short description of this command, used for the command list.
-  
-  =head2 usage
-  
-    my $usage = $test->usage;
-    $test     = $test->usage('Foo');
-  
-  Usage information for this command, used for the help screen.
-  
-  =head1 METHODS
-  
-  L<Mojolicious::Command::test> inherits all methods from L<Mojolicious::Command>
-  and implements the following new ones.
-  
-  =head2 run
-  
-    $test->run(@ARGV);
-  
-  Run this command.
-  
-  =head1 SEE ALSO
-  
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
-  
-  =cut
-MOJOLICIOUS_COMMAND_TEST
 
 $fatpacked{"Mojolicious/Command/version.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_COMMAND_VERSION';
   package Mojolicious::Command::version;
@@ -28426,14 +29702,16 @@ $fatpacked{"Mojolicious/Command/version.pm"} = '#line '.(1+__LINE__).' "'.__FILE
   
   use Mojo::IOLoop::Client;
   use Mojo::IOLoop::TLS;
+  use Mojo::JSON;
   use Mojolicious;
   
   has description => 'Show versions of available modules';
-  has usage => sub { shift->extract_usage };
+  has usage       => sub { shift->extract_usage };
   
   sub run {
     my $self = shift;
   
+    my $json = Mojo::JSON->JSON_XS ? $Cpanel::JSON::XS::VERSION : 'n/a';
     my $ev = eval { require Mojo::Reactor::EV; 1 } ? $EV::VERSION : 'n/a';
     my $socks
       = Mojo::IOLoop::Client->can_socks ? $IO::Socket::Socks::VERSION : 'n/a';
@@ -28447,9 +29725,10 @@ $fatpacked{"Mojolicious/Command/version.pm"} = '#line '.(1+__LINE__).' "'.__FILE
     Mojolicious ($Mojolicious::VERSION, $Mojolicious::CODENAME)
   
   OPTIONAL
+    Cpanel::JSON::XS 4.09+  ($json)
     EV 4.0+                 ($ev)
     IO::Socket::Socks 0.64+ ($socks)
-    IO::Socket::SSL 1.94+   ($tls)
+    IO::Socket::SSL 2.009+  ($tls)
     Net::DNS::Native 0.15+  ($nnr)
     Role::Tiny 2.000001+    ($roles)
   
@@ -28530,7 +29809,7 @@ $fatpacked{"Mojolicious/Command/version.pm"} = '#line '.(1+__LINE__).' "'.__FILE
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_COMMAND_VERSION
@@ -28547,8 +29826,9 @@ $fatpacked{"Mojolicious/Commands.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
   See 'APPLICATION help COMMAND' for more information on a specific command.
   EOF
-  has message    => sub { shift->extract_usage . "\nCommands:\n" };
-  has namespaces => sub { ['Mojolicious::Command'] };
+  has message => sub { shift->extract_usage . "\nCommands:\n" };
+  has namespaces =>
+    sub { ['Mojolicious::Command::Author', 'Mojolicious::Command'] };
   
   sub detect {
   
@@ -28659,7 +29939,7 @@ $fatpacked{"Mojolicious/Commands.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
   L<Mojolicious::Commands> is the interactive command line interface for the
   L<Mojolicious> framework. It will automatically detect available commands in
-  the C<Mojolicious::Command> namespace.
+  the C<Mojolicious::Command> and C<Mojolicious::Command::Author> namespaces.
   
   =head1 COMMANDS
   
@@ -28676,7 +29956,7 @@ $fatpacked{"Mojolicious/Commands.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
     $ mojo cpanify -u sri -p secr3t Mojolicious-Plugin-Fun-0.1.tar.gz
   
-  Use L<Mojolicious::Command::cpanify> for uploading files to CPAN.
+  Use L<Mojolicious::Command::Author::cpanify> for uploading files to CPAN.
   
   =head2 daemon
   
@@ -28708,34 +29988,34 @@ $fatpacked{"Mojolicious/Commands.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
     $ mojo generate app <AppName>
   
-  Use L<Mojolicious::Command::generate::app> to generate application directory
-  structure for a fully functional L<Mojolicious> application.
+  Use L<Mojolicious::Command::Author::generate::app> to generate application
+  directory structure for a fully functional L<Mojolicious> application.
   
   =head2 generate lite_app
   
     $ mojo generate lite_app
   
-  Use L<Mojolicious::Command::generate::lite_app> to generate a fully functional
-  L<Mojolicious::Lite> application.
+  Use L<Mojolicious::Command::Author::generate::lite_app> to generate a fully
+  functional L<Mojolicious::Lite> application.
   
   =head2 generate makefile
   
     $ mojo generate makefile
     $ ./myapp.pl generate makefile
   
-  Use L<Mojolicious::Command::generate::makefile> to generate C<Makefile.PL> file
-  for application.
+  Use L<Mojolicious::Command::Author::generate::makefile> to generate
+  C<Makefile.PL> file for application.
   
   =head2 generate plugin
   
     $ mojo generate plugin <PluginName>
   
-  Use L<Mojolicious::Command::generate::plugin> to generate directory structure
-  for a fully functional L<Mojolicious> plugin.
+  Use L<Mojolicious::Command::Author::generate::plugin> to generate directory
+  structure for a fully functional L<Mojolicious> plugin.
   
   =head2 get
   
-    $ mojo get http://mojolicious.org
+    $ mojo get https://mojolicious.org
     $ ./myapp.pl get /foo
   
   Use L<Mojolicious::Command::get> to perform requests to remote host or local
@@ -28758,7 +30038,7 @@ $fatpacked{"Mojolicious/Commands.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
     $ ./myapp.pl inflate
   
-  Use L<Mojolicious::Command::inflate> to turn templates and static files
+  Use L<Mojolicious::Command::Author::inflate> to turn templates and static files
   embedded in the C<DATA> sections of your application into real files.
   
   =head2 prefork
@@ -28780,14 +30060,6 @@ $fatpacked{"Mojolicious/Commands.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
     $ ./myapp.pl routes
   
   Use L<Mojolicious::Command::routes> to list application routes.
-  
-  =head2 test
-  
-    $ ./myapp.pl test
-    $ ./myapp.pl test t/fun.t
-  
-  Use L<Mojolicious::Command::test> to run application tests from the C<t>
-  directory.
   
   =head2 version
   
@@ -28821,7 +30093,8 @@ $fatpacked{"Mojolicious/Commands.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
     my $namespaces = $commands->namespaces;
     $commands      = $commands->namespaces(['MyApp::Command']);
   
-  Namespaces to load commands from, defaults to C<Mojolicious::Command>.
+  Namespaces to load commands from, defaults to C<Mojolicious::Command::Author>
+  and C<Mojolicious::Command>.
   
     # Add another namespace to load commands from
     push @{$commands->namespaces}, 'MyApp::Command';
@@ -28859,7 +30132,7 @@ $fatpacked{"Mojolicious/Commands.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_COMMANDS
@@ -28871,13 +30144,13 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
   # No imports, for security reasons!
   use Carp ();
   use Mojo::ByteStream;
+  use Mojo::DynamicMethods -dispatch;
   use Mojo::URL;
   use Mojo::Util;
   use Mojolicious::Routes::Match;
   use Scalar::Util ();
-  use Time::HiRes  ();
   
-  has [qw(app tx)];
+  has [qw(app tx)] => undef, weak => 1;
   has match =>
     sub { Mojolicious::Routes::Match->new(root => shift->app->routes) };
   
@@ -28887,20 +30160,17 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     qw(namespace path status template text variant)
   );
   
-  sub AUTOLOAD {
-    my $self = shift;
+  sub BUILD_DYNAMIC {
+    my ($class, $method, $dyn_methods) = @_;
   
-    my ($package, $method) = our $AUTOLOAD =~ /^(.+)::(.+)$/;
-    Carp::croak "Undefined subroutine &${package}::$method called"
-      unless Scalar::Util::blessed $self && $self->isa(__PACKAGE__);
-  
-    # Call helper with current controller
-    Carp::croak qq{Can't locate object method "$method" via package "$package"}
-      unless my $helper = $self->app->renderer->get_helper($method);
-    return $self->$helper(@_);
+    return sub {
+      my $self    = shift;
+      my $dynamic = $dyn_methods->{$self->{app}{renderer}}{$method};
+      return $self->$dynamic(@_) if $dynamic;
+      my $package = ref $self;
+      Carp::croak qq{Can't locate object method "$method" via package "$package"};
+    };
   }
-  
-  sub continue { $_[0]->app->routes->continue($_[0]) }
   
   sub cookie {
     my ($self, $name) = (shift, shift);
@@ -28955,7 +30225,7 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
   
         my $valid;
         for my $secret (@$secrets) {
-          my $check = Mojo::Util::hmac_sha1_sum($value, $secret);
+          my $check = Mojo::Util::hmac_sha1_sum("$name=$value", $secret);
           ++$valid and last if Mojo::Util::secure_compare($signature, $check);
         }
         if ($valid) { push @results, $value }
@@ -28973,7 +30243,7 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     my $self = shift;
   
     # WebSocket
-    my $tx = $self->tx || Carp::croak 'Connection already closed';
+    my $tx = $self->tx || Carp::croak 'Transaction already destroyed';
     $tx->finish(@_) and return $tx->established ? $self : $self->rendered(101)
       if $tx->is_websocket;
   
@@ -28985,26 +30255,11 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     return @_ ? $self->write(@_)->write('') : $self->write('');
   }
   
-  sub flash {
-    my $self = shift;
-  
-    # Check old flash
-    my $session = $self->session;
-    return $session->{flash} ? $session->{flash}{$_[0]} : undef
-      if @_ == 1 && !ref $_[0];
-  
-    # Initialize new flash and merge values
-    my $values = ref $_[0] ? $_[0] : {@_};
-    @{$session->{new_flash} ||= {}}{keys %$values} = values %$values;
-  
-    return $self;
-  }
-  
   sub helpers { $_[0]->app->renderer->get_helper('')->($_[0]) }
   
   sub on {
     my ($self, $name, $cb) = @_;
-    my $tx = $self->tx || Carp::croak 'Connection already closed';
+    my $tx = $self->tx || Carp::croak 'Transaction already destroyed';
     $self->rendered(101) if $tx->is_websocket && !$tx->established;
     return $tx->on($name => sub { shift; $self->$cb(@_) });
   }
@@ -29016,15 +30271,6 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     return $self;
   }
   
-  sub redirect_to {
-    my $self = shift;
-  
-    # Don't override 3xx status
-    my $res = $self->res;
-    $res->headers->location($self->url_for(@_));
-    return $self->rendered($res->is_redirect ? () : 302);
-  }
-  
   sub render {
     my $self = shift;
   
@@ -29033,10 +30279,21 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     $args->{template} = $template if $template;
     my $app     = $self->app;
     my $plugins = $app->plugins->emit_hook(before_render => $self, $args);
-    my $maybe   = delete $args->{'mojo.maybe'};
   
-    my $ts = $args->{'mojo.string'};
-    my ($output, $format) = $app->renderer->render($self, $args);
+    # Localize "extends" and "layout" to allow argument overrides
+    my ($maybe, $ts) = @{$args}{'mojo.maybe', 'mojo.string'};
+    my $stash = $self->stash;
+    local $stash->{layout}  = $stash->{layout}  if exists $stash->{layout};
+    local $stash->{extends} = $stash->{extends} if exists $stash->{extends};
+  
+    # Rendering to string
+    local @{$stash}{keys %$args} if $ts || $maybe;
+    delete @{$stash}{qw(layout extends)} if $ts;
+  
+    # All other arguments just become part of the stash
+    @$stash{keys %$args} = values %$args;
+    my $renderer = $app->renderer;
+    my ($output, $format) = $renderer->render($self, $args);
   
     # Maybe no 404
     return defined $output ? Mojo::ByteStream->new($output) : undef if $ts;
@@ -29044,10 +30301,7 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
       unless defined $output;
   
     $plugins->emit_hook(after_render => $self, \$output, $format);
-    my $headers = $self->res->body($output)->headers;
-    $headers->content_type($app->types->type($format) || 'text/plain')
-      unless $headers->content_type;
-    return !!$self->rendered($self->stash->{status});
+    return $renderer->respond($self, $output, $format, $stash->{status});
   }
   
   sub render_later { shift->stash('mojo.rendered' => 1) }
@@ -29060,23 +30314,24 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     my ($self, $status) = @_;
   
     # Make sure we have a status
-    my $res = $self->res;
-    $res->code($status || 200) if $status || !$res->code;
+    $self->res->code($status) if $status;
   
     # Finish transaction
     my $stash = $self->stash;
     if (!$stash->{'mojo.finished'} && ++$stash->{'mojo.finished'}) {
+      my $res = $self->res;
+      $res->code(200) if !$status && !$res->code;
   
       # Disable auto rendering and stop timer
       my $app = $self->render_later->app;
-      if (my $started = delete $stash->{'mojo.started'}) {
-        my $elapsed
-          = Time::HiRes::tv_interval($started, [Time::HiRes::gettimeofday()]);
-        my $rps  = $elapsed == 0 ? '??' : sprintf '%.3f', 1 / $elapsed;
-        my $code = $res->code;
-        my $msg  = $res->message || $res->default_message($code);
-        $app->log->debug("$code $msg (${elapsed}s, $rps/s)");
-      }
+      $app->log->debug(sub {
+        my $timing  = $self->helpers->timing;
+        my $elapsed = $timing->elapsed('mojo.timer') // 0;
+        my $rps     = $timing->rps($elapsed) // '??';
+        my $code    = $res->code;
+        my $msg     = $res->message || $res->default_message($code);
+        return "$code $msg (${elapsed}s, $rps/s)";
+      }) unless $stash->{'mojo.static'};
   
       $app->plugins->emit_hook_reverse(after_dispatch => $self);
       $app->sessions->store($self);
@@ -29085,37 +30340,12 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     return $self;
   }
   
-  sub req { (shift->tx || Carp::croak 'Connection already closed')->req }
-  sub res { (shift->tx || Carp::croak 'Connection already closed')->res }
-  
-  sub respond_to {
-    my ($self, $args) = (shift, ref $_[0] ? $_[0] : {@_});
-  
-    # Find target
-    my $target;
-    my $renderer = $self->app->renderer;
-    my @formats  = @{$renderer->accepts($self)};
-    for my $format (@formats ? @formats : ($renderer->default_format)) {
-      next unless $target = $args->{$format};
-      $self->stash->{format} = $format;
-      last;
-    }
-  
-    # Fallback
-    unless ($target) {
-      return $self->rendered(204) unless $target = $args->{any};
-      delete $self->stash->{format};
-    }
-  
-    # Dispatch
-    ref $target eq 'CODE' ? $target->($self) : $self->render(%$target);
-  
-    return $self;
-  }
+  sub req { (shift->tx || Carp::croak 'Transaction already destroyed')->req }
+  sub res { (shift->tx || Carp::croak 'Transaction already destroyed')->res }
   
   sub send {
     my ($self, $msg, $cb) = @_;
-    my $tx = $self->tx || Carp::croak 'Connection already closed';
+    my $tx = $self->tx || Carp::croak 'Transaction already destroyed';
     Carp::croak 'No WebSocket connection to send message to'
       unless $tx->is_websocket;
     $tx->send($msg, $cb ? sub { shift; $self->$cb(@_) } : ());
@@ -29150,8 +30380,8 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     return $self->every_signed_cookie($name)->[-1] unless defined $value;
   
     # Response cookie
-    my $checksum = Mojo::Util::hmac_sha1_sum($value, $self->app->secrets->[0]);
-    return $self->cookie($name, "$value--$checksum", $options);
+    my $sum = Mojo::Util::hmac_sha1_sum("$name=$value", $self->app->secrets->[0]);
+    return $self->cookie($name, "$value--$sum", $options);
   }
   
   sub stash { Mojo::Util::_stash(stash => @_) }
@@ -29193,22 +30423,6 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     $base_path->parts([])->trailing_slash(0);
   
     return $url;
-  }
-  
-  sub validation {
-    my $self = shift;
-  
-    my $stash = $self->stash;
-    return $stash->{'mojo.validation'} if $stash->{'mojo.validation'};
-  
-    my $req    = $self->req;
-    my $token  = $self->session->{csrf_token};
-    my $header = $req->headers->header('X-CSRF-Token');
-    my $hash   = $req->params->to_hash;
-    $hash->{csrf_token} //= $header if $token && $header;
-    $hash->{$_} = $req->every_upload($_) for map { $_->name } @{$req->uploads};
-    my $validation = $self->app->validator->validation->input($hash);
-    return $stash->{'mojo.validation'} = $validation->csrf_token($token);
   }
   
   sub write {
@@ -29254,8 +30468,7 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
   
   =head1 ATTRIBUTES
   
-  L<Mojolicious::Controller> inherits all attributes from L<Mojo::Base> and
-  implements the following new ones.
+  L<Mojolicious::Controller> implements the following attributes.
   
   =head2 app
   
@@ -29263,7 +30476,7 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     $c      = $c->app(Mojolicious->new);
   
   A reference back to the application that dispatched to this controller, usually
-  a L<Mojolicious> object.
+  a L<Mojolicious> object. Note that this attribute is weakened.
   
     # Use application logger
     $c->app->log->debug('Hello Mojo');
@@ -29291,9 +30504,9 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
   
   The transaction that is currently being processed, usually a
   L<Mojo::Transaction::HTTP> or L<Mojo::Transaction::WebSocket> object. Note that
-  this reference is usually weakened, so the object needs to be referenced
-  elsewhere as well when you're performing non-blocking operations and the
-  underlying connection might get closed early.
+  this attribute is weakened. So the object needs to be referenced elsewhere as
+  well when you're performing non-blocking operations and the underlying
+  connection might get closed early.
   
     # Check peer information
     my $address = $c->tx->remote_address;
@@ -29312,13 +30525,6 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
   
   L<Mojolicious::Controller> inherits all methods from L<Mojo::Base> and
   implements the following new ones.
-  
-  =head2 continue
-  
-    $c->continue;
-  
-  Continue dispatch chain from an intermediate destination with
-  L<Mojolicious::Routes/"continue">.
   
   =head2 cookie
   
@@ -29376,18 +30582,6 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
   Close WebSocket connection or long poll stream gracefully. This method will
   automatically respond to WebSocket handshake requests with a C<101> response
   status, to establish the WebSocket connection.
-  
-  =head2 flash
-  
-    my $foo = $c->flash('foo');
-    $c      = $c->flash({foo => 'bar'});
-    $c      = $c->flash(foo => 'bar');
-  
-  Data storage persistent only for the next request, stored in the L</"session">.
-  
-    # Show message after redirect
-    $c->flash(message => 'User created successfully!');
-    $c->redirect_to('show_user', id => 23);
   
   =head2 helpers
   
@@ -29470,24 +30664,6 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     # Only file uploads
     my $foo = $c->req->upload('foo');
   
-  =head2 redirect_to
-  
-    $c = $c->redirect_to('named', foo => 'bar');
-    $c = $c->redirect_to('named', {foo => 'bar'});
-    $c = $c->redirect_to('/index.html');
-    $c = $c->redirect_to('http://example.com/index.html');
-  
-  Prepare a C<302> (if the status code is not already C<3xx>) redirect response
-  with C<Location> header, takes the same arguments as L</"url_for">.
-  
-    # Moved Permanently
-    $c->res->code(301);
-    $c->redirect_to('some_route');
-  
-    # Temporary Redirect
-    $c->res->code(307);
-    $c->redirect_to('some_route');
-  
   =head2 render
   
     my $bool = $c->render;
@@ -29555,7 +30731,9 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
   
   Try to render content, but do not call
   L<Mojolicious::Plugin::DefaultHelpers/"reply-E<gt>not_found"> if no response
-  could be generated, takes the same arguments as L</"render">.
+  could be generated, all arguments get localized automatically and are only
+  available during this render operation, takes the same arguments as
+  L</"render">.
   
     # Render template "index_local" only if it exists
     $c->render_maybe('index_local') or $c->render('index');
@@ -29595,6 +30773,7 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     my $req = $c->tx->req;
   
     # Extract request information
+    my $id     = $c->req->request_id;
     my $method = $c->req->method;
     my $url    = $c->req->url->to_abs;
     my $info   = $c->req->url->to_abs->userinfo;
@@ -29628,33 +30807,6 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     # Make sure response is cached correctly
     $c->res->headers->cache_control('public, max-age=300');
     $c->res->headers->append(Vary => 'Accept-Encoding');
-  
-  =head2 respond_to
-  
-    $c = $c->respond_to(
-      json => {json => {message => 'Welcome!'}},
-      html => {template => 'welcome'},
-      any  => sub {...}
-    );
-  
-  Automatically select best possible representation for resource from C<Accept>
-  request header, C<format> stash value or C<format> C<GET>/C<POST> parameter,
-  defaults to L<Mojolicious::Renderer/"default_format"> or rendering an empty
-  C<204> response. Each representation can be handled with a callback or a hash
-  reference containing arguments to be passed to L</"render">. Since browsers
-  often don't really know what they actually want, unspecific C<Accept> request
-  headers with more than one MIME type will be ignored, unless the
-  C<X-Requested-With> header is set to the value C<XMLHttpRequest>.
-  
-    # Everything else than "json" and "xml" gets a 204 response
-    $c->respond_to(
-      json => sub { $c->render(json => {just => 'works'}) },
-      xml  => {text => '<just>works</just>'},
-      any  => {data => '', status => 204}
-    );
-  
-  For more advanced negotiation logic you can also use the helper
-  L<Mojolicious::Plugin::DefaultHelpers/"accepts">.
   
   =head2 send
   
@@ -29771,6 +30923,18 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
   
   Generate a portable L<Mojo::URL> object with base for a path, URL or route.
   
+    # Rebuild URL for the current route
+    $c->url_for;
+  
+    # Rebuild URL for the current route, but replace the "name" placeholder value
+    $c->url_for(name => 'sebastian');
+  
+    # Absolute URL for the current route
+    $c->url_for->to_abs;
+  
+    # Build URL for route "test" with two placeholder values
+    $c->url_for('test', name => 'sebastian', foo => 'bar');
+  
     # "http://127.0.0.1:3000/index.html" if application was started with Morbo
     $c->url_for('/index.html')->to_abs;
   
@@ -29787,28 +30951,7 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
   to inherit query parameters from the current request.
   
     # "/list?q=mojo&page=2" if current request was for "/list?q=mojo&page=1"
-    $c->url_with->query([page => 2]);
-  
-  =head2 validation
-  
-    my $validation = $c->validation;
-  
-  Get L<Mojolicious::Validator::Validation> object for current request to
-  validate file uploads as well as C<GET> and C<POST> parameters extracted from
-  the query string and C<application/x-www-form-urlencoded> or
-  C<multipart/form-data> message body. Parts of the request body need to be loaded
-  into memory to parse C<POST> parameters, so you have to make sure it is not
-  excessively large. There's a 16MiB limit for requests by default.
-  
-    # Validate GET/POST parameter
-    my $validation = $c->validation;
-    $validation->required('title', 'trim')->size(3, 50);
-    my $title = $validation->param('title');
-  
-    # Validate file upload
-    my $validation = $c->validation;
-    $validation->required('tarball')->upload->size(1, 1048576);
-    my $tarball = $validation->param('tarball');
+    $c->url_with->query({page => 2});
   
   =head2 write
   
@@ -29899,7 +31042,7 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     o!
     0
   
-  =head1 AUTOLOAD
+  =head1 HELPERS
   
   In addition to the L</"ATTRIBUTES"> and L</"METHODS"> above you can also call
   helpers provided by L</"app"> on L<Mojolicious::Controller> objects. This
@@ -29915,7 +31058,7 @@ $fatpacked{"Mojolicious/Controller.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_CONTROLLER
@@ -29941,11 +31084,11 @@ $fatpacked{"Mojolicious/Lite.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<
     # Initialize application class
     my $caller = caller;
     no strict 'refs';
-    push @{"${caller}::ISA"}, 'Mojo';
+    push @{"${caller}::ISA"}, 'Mojolicious';
   
     # Generate moniker based on filename
     my $moniker = path($ENV{MOJO_EXE})->basename('.pl', '.pm', '.t');
-    my $app = shift->new(moniker => $moniker);
+    my $app     = shift->new(moniker => $moniker);
   
     # Initialize routes without namespaces
     my $routes = $app->routes->namespaces([]);
@@ -29957,7 +31100,7 @@ $fatpacked{"Mojolicious/Lite.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<
       monkey_patch $caller, $name, sub { $routes->$name(@_) };
     }
     monkey_patch($caller, $_, sub {$app}) for qw(new app);
-    monkey_patch $caller, del => sub { $routes->delete(@_) };
+    monkey_patch $caller, del   => sub { $routes->delete(@_) };
     monkey_patch $caller, group => sub (&) {
       (my $old, $root) = ($root, $routes);
       shift->();
@@ -29973,7 +31116,7 @@ $fatpacked{"Mojolicious/Lite.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<
     Mojo::UserAgent::Server->app($app) unless Mojo::UserAgent::Server->app;
   
     # Lite apps are strict!
-    unshift @_, 'Mojo::Base', -strict;
+    unshift @_, 'Mojo::Base', '-strict';
     goto &Mojo::Base::import;
   }
   
@@ -30276,7 +31419,7 @@ $fatpacked{"Mojolicious/Lite.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_LITE
@@ -30331,7 +31474,7 @@ $fatpacked{"Mojolicious/Plugin.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_PLUGIN
@@ -30361,6 +31504,9 @@ $fatpacked{"Mojolicious/Plugin/Config.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
   sub register {
     my ($self, $app, $conf) = @_;
   
+    # DEPRECATED!
+    $app->defaults(config => $app->config);
+  
     # Override
     return $app->config if $app->config->{config_override};
   
@@ -30388,7 +31534,7 @@ $fatpacked{"Mojolicious/Plugin/Config.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
     # Merge everything
     $config = {%$config, %{$self->load($mode, $conf, $app)}} if $mode;
     $config = {%{$conf->{default}}, %$config} if $conf->{default};
-    return $app->defaults(config => $app->config)->config($config)->config;
+    return $app->config($config)->config;
   }
   
   1;
@@ -30422,7 +31568,7 @@ $fatpacked{"Mojolicious/Plugin/Config.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
     say $config->{foo};
   
     # foo.html.ep
-    %= $config->{foo}
+    %= config->{foo}
   
     # The configuration is available application-wide
     my $config = app->config;
@@ -30443,8 +31589,8 @@ $fatpacked{"Mojolicious/Plugin/Config.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
   C<$moniker.conf> with C<mode> specific ones like C<$moniker.$mode.conf>, which
   will be detected automatically.
   
-  If the configuration value C<config_override> has been set in L<Mojo/"config">
-  when this plugin is loaded, it will not do anything.
+  If the configuration value C<config_override> has been set in
+  L<Mojolicious/"config"> when this plugin is loaded, it will not do anything.
   
   The code of this plugin is a good example for learning to build new plugins,
   you're welcome to fork it.
@@ -30518,7 +31664,7 @@ $fatpacked{"Mojolicious/Plugin/Config.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_PLUGIN_CONFIG
@@ -30527,18 +31673,21 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
   package Mojolicious::Plugin::DefaultHelpers;
   use Mojo::Base 'Mojolicious::Plugin';
   
+  use Mojo::Asset::File;
   use Mojo::ByteStream;
   use Mojo::Collection;
   use Mojo::Exception;
   use Mojo::IOLoop;
+  use Mojo::Promise;
   use Mojo::Util qw(dumper hmac_sha1_sum steady_time);
-  use Scalar::Util 'blessed';
+  use Time::HiRes qw(gettimeofday tv_interval);
+  use Scalar::Util qw(blessed weaken);
   
   sub register {
     my ($self, $app) = @_;
   
     # Controller alias helpers
-    for my $name (qw(app flash param stash session url_for validation)) {
+    for my $name (qw(app param stash session url_for)) {
       $app->helper($name => sub { shift->$name(@_) });
     }
   
@@ -30556,16 +31705,28 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
     $app->helper(content_for  => sub { _content(1, 0, @_) });
     $app->helper(content_with => sub { _content(0, 1, @_) });
   
-    $app->helper($_ => $self->can("_$_"))
-      for qw(csrf_token current_route delay inactivity_timeout is_fresh url_with);
+    $app->helper(continue => sub { $_[0]->app->routes->continue($_[0]) });
   
-    $app->helper(dumper => sub { shift; dumper @_ });
+    $app->helper($_ => $self->can("_$_"))
+      for qw(csrf_token current_route flash inactivity_timeout is_fresh),
+      qw(redirect_to respond_to url_with validation);
+  
+    $app->helper(dumper  => sub { shift; dumper @_ });
     $app->helper(include => sub { shift->render_to_string(@_) });
   
-    $app->helper("reply.$_" => $self->can("_$_")) for qw(asset static);
+    $app->helper('proxy.get_p'  => sub { _proxy_method_p('GET',  @_) });
+    $app->helper('proxy.post_p' => sub { _proxy_method_p('POST', @_) });
+    $app->helper('proxy.start_p' => \&_proxy_start_p);
+  
+    $app->helper("reply.$_" => $self->can("_$_")) for qw(asset file static);
   
     $app->helper('reply.exception' => sub { _development('exception', @_) });
     $app->helper('reply.not_found' => sub { _development('not_found', @_) });
+  
+    $app->helper('timing.begin'         => \&_timing_begin);
+    $app->helper('timing.elapsed'       => \&_timing_elapsed);
+    $app->helper('timing.rps'           => \&_timing_rps);
+    $app->helper('timing.server_timing' => \&_timing_server_timing);
   
     $app->helper(ua => sub { shift->app->ua });
   }
@@ -30584,9 +31745,9 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
   
     my $hash = $c->stash->{'mojo.content'} ||= {};
     if (defined $content) {
-      if ($append) { $hash->{$name} .= _block($content) }
-      if ($replace) { $hash->{$name} = _block($content) }
-      else          { $hash->{$name} //= _block($content) }
+      if   ($append)  { $hash->{$name} .= _block($content) }
+      if   ($replace) { $hash->{$name} = _block($content) }
+      else            { $hash->{$name} //= _block($content) }
     }
   
     return Mojo::ByteStream->new($hash->{$name} // '');
@@ -30603,33 +31764,24 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
     return @_ ? $route->name eq shift : $route->name;
   }
   
-  sub _delay {
-    my $c  = shift;
-    my $tx = $c->render_later->tx;
-    Mojo::IOLoop->delay(@_)
-      ->catch(sub { $c->helpers->reply->exception(pop) and undef $tx })->wait;
-  }
-  
   sub _development {
     my ($page, $c, $e) = @_;
   
     my $app = $c->app;
-    $app->log->error($e = _exception($e) ? $e : Mojo::Exception->new($e)->inspect)
+    $app->log->error(($e = _is_e($e) ? $e : Mojo::Exception->new($e))->inspect)
       if $page eq 'exception';
   
     # Filtered stash snapshot
     my $stash = $c->stash;
-    my %snapshot = map { $_ => $stash->{$_} }
+    %{$stash->{snapshot} = {}} = map { $_ => $stash->{$_} }
       grep { !/^mojo\./ and defined $stash->{$_} } keys %$stash;
+    $stash->{exception} = $page eq 'exception' ? $e : undef;
   
     # Render with fallbacks
-    my $mode     = $app->mode;
-    my $renderer = $app->renderer;
-    my $options  = {
-      exception => $page eq 'exception' ? $e : undef,
-      format => $stash->{format} || $renderer->default_format,
+    my $mode    = $app->mode;
+    my $options = {
+      format   => $stash->{format} || $app->renderer->default_format,
       handler  => undef,
-      snapshot => \%snapshot,
       status   => $page eq 'exception' ? 500 : 404,
       template => "$page.$mode"
     };
@@ -30639,7 +31791,6 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
     return $c;
   }
   
-  sub _exception { blessed $_[0] && $_[0]->isa('Mojo::Exception') }
   
   sub _fallbacks {
     my ($c, $options, $template, $bundled) = @_;
@@ -30652,9 +31803,26 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
   
     # Inline template
     my $stash = $c->stash;
-    return undef unless $stash->{format} eq 'html';
+    return undef unless $options->{format} eq 'html';
     delete @$stash{qw(extends layout)};
     return $c->render_maybe($bundled, %$options, handler => 'ep');
+  }
+  
+  sub _file { _asset(shift, Mojo::Asset::File->new(path => shift)) }
+  
+  sub _flash {
+    my $c = shift;
+  
+    # Check old flash
+    my $session = $c->session;
+    return $session->{flash} ? $session->{flash}{$_[0]} : undef
+      if @_ == 1 && !ref $_[0];
+  
+    # Initialize new flash and merge values
+    my $values = ref $_[0] ? $_[0] : {@_};
+    @{$session->{new_flash} ||= {}}{keys %$values} = values %$values;
+  
+    return $c;
   }
   
   sub _inactivity_timeout {
@@ -30664,9 +31832,95 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
     return $c;
   }
   
+  sub _is_e { blessed $_[0] && $_[0]->isa('Mojo::Exception') }
+  
   sub _is_fresh {
     my ($c, %options) = @_;
     return $c->app->static->is_fresh($c, \%options);
+  }
+  
+  sub _proxy_method_p {
+    my ($method, $c) = (shift, shift);
+    return _proxy_start_p($c, $c->ua->build_tx($method, @_));
+  }
+  
+  sub _proxy_start_p {
+    my ($c, $source_tx) = @_;
+    my $tx = $c->render_later->tx;
+  
+    my $promise = Mojo::Promise->new;
+    $source_tx->res->content->auto_upgrade(0)->auto_decompress(0)->once(
+      body => sub {
+        my $source_content = shift;
+  
+        my $source_res = $source_tx->res;
+        my $res        = $tx->res;
+        my $content    = $res->content;
+        $res->code($source_res->code)->message($source_res->message);
+        my $headers = $source_res->headers->clone->dehop;
+        $content->headers($headers);
+        $promise->resolve;
+  
+        my $source_stream = Mojo::IOLoop->stream($source_tx->connection);
+        return unless my $stream = Mojo::IOLoop->stream($tx->connection);
+  
+        my $write = $source_content->is_chunked ? 'write_chunk' : 'write';
+        $source_content->unsubscribe('read')->on(
+          read => sub {
+            $content->$write(pop) and $tx->resume;
+  
+            # Throttle transparently when backpressure rises
+            return if $stream->can_write;
+            $source_stream->stop;
+            $stream->once(drain => sub { $source_stream->start });
+          }
+        );
+  
+        # Unknown length (fall back to connection close)
+        $source_res->once(finish => sub { $content->$write('') and $tx->resume })
+          unless length($headers->content_length // '');
+      }
+    );
+    weaken $source_tx;
+    $source_tx->once(finish => sub { $promise->reject(_tx_error(@_)) });
+  
+    $c->ua->start_p($source_tx);
+  
+    return $promise;
+  }
+  
+  sub _redirect_to {
+    my $c = shift;
+  
+    # Don't override 3xx status
+    my $res = $c->res;
+    $res->headers->location($c->url_for(@_));
+    return $c->rendered($res->is_redirect ? () : 302);
+  }
+  
+  sub _respond_to {
+    my ($c, $args) = (shift, ref $_[0] ? $_[0] : {@_});
+  
+    # Find target
+    my $target;
+    my $renderer = $c->app->renderer;
+    my @formats  = @{$renderer->accepts($c)};
+    for my $format (@formats ? @formats : ($renderer->default_format)) {
+      next unless $target = $args->{$format};
+      $c->stash->{format} = $format;
+      last;
+    }
+  
+    # Fallback
+    unless ($target) {
+      return $c->rendered(204) unless $target = $args->{any};
+      delete $c->stash->{format};
+    }
+  
+    # Dispatch
+    ref $target eq 'CODE' ? $target->($c) : $c->render(%$target);
+  
+    return $c;
   }
   
   sub _static {
@@ -30676,9 +31930,45 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
     return !$c->helpers->reply->not_found;
   }
   
+  sub _timing_begin { shift->stash->{'mojo.timing'}{shift()} = [gettimeofday] }
+  
+  sub _timing_elapsed {
+    my ($c, $name) = @_;
+    return undef unless my $started = $c->stash->{'mojo.timing'}{$name};
+    return tv_interval($started, [gettimeofday()]);
+  }
+  
+  sub _timing_rps { $_[1] == 0 ? undef : sprintf '%.3f', 1 / $_[1] }
+  
+  sub _timing_server_timing {
+    my ($c, $metric, $desc, $dur) = @_;
+    my $value = $metric;
+    $value .= qq{;desc="$desc"} if defined $desc;
+    $value .= ";dur=$dur"       if defined $dur;
+    $c->res->headers->append('Server-Timing' => $value);
+  }
+  
+  sub _tx_error { (shift->error || {})->{message} // 'Unknown error' }
+  
   sub _url_with {
     my $c = shift;
     return $c->url_for(@_)->query($c->req->url->query->clone);
+  }
+  
+  sub _validation {
+    my $c = shift;
+  
+    my $stash = $c->stash;
+    return $stash->{'mojo.validation'} if $stash->{'mojo.validation'};
+  
+    my $req    = $c->req;
+    my $token  = $c->session->{csrf_token};
+    my $header = $req->headers->header('X-CSRF-Token');
+    my $hash   = $req->params->to_hash;
+    $hash->{csrf_token} //= $header if $token && $header;
+    $hash->{$_} = $req->every_upload($_) for map { $_->name } @{$req->uploads};
+    my $v = $c->app->validator->validation->input($hash);
+    return $stash->{'mojo.validation'} = $v->csrf_token($token);
   }
   
   1;
@@ -30717,10 +32007,10 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
     my $formats = $c->accepts;
     my $format  = $c->accepts('html', 'json', 'txt');
   
-  Select best possible representation for resource from C<Accept> request header,
-  C<format> stash value or C<format> C<GET>/C<POST> parameter with
-  L<Mojolicious::Renderer/"accepts">, defaults to returning the first extension
-  if no preference could be detected.
+  Select best possible representation for resource from C<format> C<GET>/C<POST>
+  parameter, C<format> stash value or C<Accept> request header with
+  L<Mojolicious::Renderer/"accepts">, defaults to returning the first extension if
+  no preference could be detected.
   
     # Check if JSON is acceptable
     $c->render(json => {hello => 'world'}) if $c->accepts('json');
@@ -30757,7 +32047,7 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
   
     %= config 'something'
   
-  Alias for L<Mojo/"config">.
+  Alias for L<Mojolicious/"config">.
   
   =head2 content
   
@@ -30810,6 +32100,13 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
     % end
     %= content 'message'
   
+  =head2 continue
+  
+    $c->continue;
+  
+  Continue dispatch chain from an intermediate destination with
+  L<Mojolicious::Routes/"continue">.
+  
   =head2 csrf_token
   
     %= csrf_token
@@ -30824,33 +32121,6 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
     %= current_route
   
   Check or get name of current route.
-  
-  =head2 delay
-  
-    $c->delay(sub {...}, sub {...});
-  
-  Disable automatic rendering and use L<Mojo::IOLoop/"delay"> for flow-control.
-  Also keeps a reference to L<Mojolicious::Controller/"tx"> in case the underlying
-  connection gets closed early, and calls L</"reply-E<gt>exception"> if an
-  exception gets thrown in one of the steps, breaking the chain.
-  
-    # Longer version
-    $c->render_later;
-    my $tx    = $c->tx;
-    my $delay = Mojo::IOLoop->delay(sub {...}, sub {...})
-    $delay->catch(sub { $c->helpers->reply->exception(pop) and undef $tx })->wait;
-  
-    # Non-blocking request
-    $c->delay(
-      sub {
-        my $delay = shift;
-        $c->ua->get('http://mojolicious.org' => $delay->begin);
-      },
-      sub {
-        my ($delay, $tx) = @_;
-        $c->render(json => {title => $tx->result->dom->at('title')->text});
-      }
-    );
   
   =head2 dumper
   
@@ -30869,9 +32139,16 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
   
   =head2 flash
   
+    my $foo = $c->flash('foo');
+    $c      = $c->flash({foo => 'bar'});
+    $c      = $c->flash(foo => 'bar');
     %= flash 'foo'
   
-  Alias for L<Mojolicious::Controller/"flash">.
+  Data storage persistent only for the next request, stored in the L</"session">.
+  
+    # Show message after redirect
+    $c->flash(message => 'User created successfully!');
+    $c->redirect_to('show_user', id => 23);
   
   =head2 inactivity_timeout
   
@@ -30919,6 +32196,81 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
   
   Alias for L<Mojolicious::Controller/"param">.
   
+  =head2 proxy->get_p
+  
+    my $promise = $c->proxy->get_p('http://example.com' => {Accept => '*/*'});
+  
+  Perform non-blocking C<GET> request and forward response as efficiently as
+  possible, takes the same arguments as L<Mojo::UserAgent/"get"> and returns a
+  L<Mojo::Promise> object. Note that this helper is B<EXPERIMENTAL> and might
+  change without warning!
+  
+    # Forward with exception handling
+    $c->proxy->get_p('http://mojolicious.org')->catch(sub {
+      my $err = shift;
+      $c->log->debug("Proxy error: $err");
+      $c->render(text => 'Something went wrong!', status => 400);
+    });
+  
+  =head2 proxy->post_p
+  
+    my $promise = $c->proxy->post_p('http://example.com' => {Accept => '*/*'});
+  
+  Perform non-blocking C<POST> request and forward response as efficiently as
+  possible, takes the same arguments as L<Mojo::UserAgent/"post"> and returns a
+  L<Mojo::Promise> object. Note that this helper is B<EXPERIMENTAL> and might
+  change without warning!
+  
+    # Forward with exception handling
+    $c->proxy->post_p('example.com' => form => {test => 'pass'})->catch(sub {
+      my $err = shift;
+      $c->log->debug("Proxy error: $err");
+      $c->render(text => 'Something went wrong!', status => 400);
+    });
+  
+  =head2 proxy->start_p
+  
+    my $promise = $c->proxy->start_p(Mojo::Transaction::HTTP->new);
+  
+  Perform non-blocking request for a custom L<Mojo::Transaction::HTTP> object and
+  forward response as efficiently as possible, returns a L<Mojo::Promise> object.
+  Note that this helper is B<EXPERIMENTAL> and might change without warning!
+  
+    # Forward with exception handling
+    my $tx = $c->ua->build_tx(GET => 'http://mojolicious.org');
+    $c->proxy->start_p($tx)->catch(sub {
+      my $err = shift;
+      $c->log->debug("Proxy error: $err");
+      $c->render(text => 'Something went wrong!', status => 400);
+    });
+  
+    # Forward with custom request and response headers
+    my $headers = $c->req->headers->clone->dehop;
+    $headers->header('X-Proxy' => 'Mojo');
+    my $tx = $c->ua->build_tx(GET => 'http://example.com' => $headers->to_hash);
+    $c->proxy->start_p($tx);
+    $tx->res->content->once(body => sub {
+      $c->res->headers->header('X-Proxy' => 'Mojo');
+    });
+  
+  =head2 redirect_to
+  
+    $c = $c->redirect_to('named', foo => 'bar');
+    $c = $c->redirect_to('named', {foo => 'bar'});
+    $c = $c->redirect_to('/index.html');
+    $c = $c->redirect_to('http://example.com/index.html');
+  
+  Prepare a C<302> (if the status code is not already C<3xx>) redirect response
+  with C<Location> header, takes the same arguments as L</"url_for">.
+  
+    # Moved Permanently
+    $c->res->code(301);
+    $c->redirect_to('some_route');
+  
+    # Temporary Redirect
+    $c->res->code(307);
+    $c->redirect_to('some_route');
+  
   =head2 reply->asset
   
     $c->reply->asset(Mojo::Asset::File->new);
@@ -30949,6 +32301,23 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
   the stash values C<exception> to a L<Mojo::Exception> object and C<snapshot> to
   a copy of the L</"stash"> for use in the templates.
   
+  =head2 reply->file
+  
+    $c->reply->file('/etc/passwd');
+  
+  Reply with a static file from an absolute path anywhere on the file system using
+  L<Mojolicious/"static">.
+  
+    # Longer version
+    $c->reply->asset(Mojo::Asset::File->new(path => '/etc/passwd'));
+  
+    # Serve file from an absolute path with a custom content type
+    $c->res->headers->content_type('application/myapp');
+    $c->reply->file('/home/sri/foo.txt');
+  
+    # Serve file from a secret application directory
+    $c->reply->file($c->app->home->child('secret', 'file.txt'));
+  
   =head2 reply->not_found
   
     $c = $c->reply->not_found;
@@ -30968,9 +32337,33 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
   helper uses a relative path, but does not protect from traversing to parent
   directories.
   
-    # Serve file with a custom content type
+    # Serve file from a relative path with a custom content type
     $c->res->headers->content_type('application/myapp');
     $c->reply->static('foo.txt');
+  
+  =head2 respond_to
+  
+    $c = $c->respond_to(
+      json => {json => {message => 'Welcome!'}},
+      html => {template => 'welcome'},
+      any  => sub {...}
+    );
+  
+  Automatically select best possible representation for resource from C<format>
+  C<GET>/C<POST> parameter, C<format> stash value or C<Accept> request header,
+  defaults to L<Mojolicious::Renderer/"default_format"> or rendering an empty
+  C<204> response. Each representation can be handled with a callback or a hash
+  reference containing arguments to be passed to
+  L<Mojolicious::Controller/"render">.
+  
+    # Everything else than "json" and "xml" gets a 204 response
+    $c->respond_to(
+      json => sub { $c->render(json => {just => 'works'}) },
+      xml  => {text => '<just>works</just>'},
+      any  => {data => '', status => 204}
+    );
+  
+  For more advanced negotiation logic you can also use L</"accepts">.
   
   =head2 session
   
@@ -30987,6 +32380,64 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
   
     %= stash('name') // 'Somebody'
   
+  =head2 timing->begin
+  
+    $c->timing->begin('foo');
+  
+  Create named timestamp for L<"timing-E<gt>elapsed">.
+  
+  =head2 timing->elapsed
+  
+    my $elapsed = $c->timing->elapsed('foo');
+  
+  Return fractional amount of time in seconds since named timstamp has been
+  created with L</"timing-E<gt>begin"> or C<undef> if no such timestamp exists.
+  
+    # Log timing information
+    $c->timing->begin('database_stuff');
+    ...
+    my $elapsed = $c->timing->elapsed('database_stuff');
+    $c->app->log->debug("Database stuff took $elapsed seconds");
+  
+  =head2 timing->rps
+  
+    my $rps = $c->timing->rps('0.001');
+  
+  Return fractional number of requests that could be performed in one second if
+  every singe one took the given amount of time in seconds or C<undef> if the
+  number is too low.
+  
+    # Log more timing information
+    $c->timing->begin('web_stuff');
+    ...
+    my $elapsed = $c->timing->elapsed('web_stuff');
+    my $rps     = $c->timing->rps($elapsed);
+    $c->app->log->debug("Web stuff took $elapsed seconds ($rps per second)");
+  
+  =head2 timing->server_timing
+  
+    $c->timing->server_timing('metric');
+    $c->timing->server_timing('metric', 'Some Description');
+    $c->timing->server_timing('metric', 'Some Description', '0.001');
+  
+  Create C<Server-Timing> header with optional description and duration.
+  
+    # "Server-Timing: miss"
+    $c->timing->server_timing('miss');
+  
+    # "Server-Timing: dc;desc=atl"
+    $c->timing->server_timing('dc', 'atl');
+  
+    # "Server-Timing: db;desc=Database;dur=0.0001"
+    $c->timing->begin('database_stuff');
+    ...
+    my $elapsed = $c->timing->elapsed('database_stuff');
+    $c->timing->server_timing('db', 'Database', $elapsed);
+  
+    # "Server-Timing: miss, dc;desc=atl"
+    $c->timing->server_timing('miss');
+    $c->timing->server_timing('dc', 'atl');
+  
   =head2 title
   
     %= title
@@ -31000,7 +32451,7 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
   
     %= ua->get('mojolicious.org')->result->dom->at('title')->text
   
-  Alias for L<Mojo/"ua">.
+  Alias for L<Mojolicious/"ua">.
   
   =head2 url_for
   
@@ -31017,13 +32468,28 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
   Does the same as L</"url_for">, but inherits query parameters from the current
   request.
   
-    %= url_with->query([page => 2])
+    %= url_with->query({page => 2})
   
   =head2 validation
   
-    %= validation->param('foo')
+    my $v = $c->validation;
   
-  Alias for L<Mojolicious::Controller/"validation">.
+  Get L<Mojolicious::Validator::Validation> object for current request to
+  validate file uploads as well as C<GET> and C<POST> parameters extracted from
+  the query string and C<application/x-www-form-urlencoded> or
+  C<multipart/form-data> message body. Parts of the request body need to be loaded
+  into memory to parse C<POST> parameters, so you have to make sure it is not
+  excessively large. There's a 16MiB limit for requests by default.
+  
+    # Validate GET/POST parameter
+    my $v = $c->validation;
+    $v->required('title', 'trim')->size(3, 50);
+    my $title = $v->param('title');
+  
+    # Validate file upload
+    my $v = $c->validation;
+    $v->required('tarball')->upload->size(1, 1048576);
+    my $tarball = $v->param('tarball');
   
   =head1 METHODS
   
@@ -31038,7 +32504,7 @@ $fatpacked{"Mojolicious/Plugin/DefaultHelpers.pm"} = '#line '.(1+__LINE__).' "'.
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_PLUGIN_DEFAULTHELPERS
@@ -31068,7 +32534,7 @@ $fatpacked{"Mojolicious/Plugin/EPLRenderer.pm"} = '#line '.(1+__LINE__).' "'.__F
     # Not cached
     else {
       my $inline = $options->{inline};
-      my $name = defined $inline ? md5_sum encode('UTF-8', $inline) : undef;
+      my $name   = defined $inline ? md5_sum encode('UTF-8', $inline) : undef;
       return unless defined($name //= $renderer->template_name($options));
   
       # Inline
@@ -31143,7 +32609,7 @@ $fatpacked{"Mojolicious/Plugin/EPLRenderer.pm"} = '#line '.(1+__LINE__).' "'.__F
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_PLUGIN_EPLRENDERER
@@ -31250,7 +32716,7 @@ $fatpacked{"Mojolicious/Plugin/EPRenderer.pm"} = '#line '.(1+__LINE__).' "'.__FI
     # Mojolicious::Lite
     plugin EPRenderer => {template => {line_start => '.'}};
   
-  Attribute values passed to L<Mojo::Template> object used to render templates.
+  Attribute values passed to L<Mojo::Template> objects used to render templates.
   
   =head1 METHODS
   
@@ -31266,7 +32732,7 @@ $fatpacked{"Mojolicious/Plugin/EPRenderer.pm"} = '#line '.(1+__LINE__).' "'.__FI
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_PLUGIN_EPRENDERER
@@ -31274,6 +32740,8 @@ MOJOLICIOUS_PLUGIN_EPRENDERER
 $fatpacked{"Mojolicious/Plugin/HeaderCondition.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_PLUGIN_HEADERCONDITION';
   package Mojolicious::Plugin::HeaderCondition;
   use Mojo::Base 'Mojolicious::Plugin';
+  
+  use re 'is_regexp';
   
   sub register {
     my ($self, $app) = @_;
@@ -31287,8 +32755,7 @@ $fatpacked{"Mojolicious/Plugin/HeaderCondition.pm"} = '#line '.(1+__LINE__).' "'
   
   sub _check {
     my ($value, $pattern) = @_;
-    return 1
-      if $value && $pattern && ref $pattern eq 'Regexp' && $value =~ $pattern;
+    return 1 if $value && $pattern && is_regexp($pattern) && $value =~ $pattern;
     return $value && defined $pattern && $pattern eq $value;
   }
   
@@ -31358,7 +32825,7 @@ $fatpacked{"Mojolicious/Plugin/HeaderCondition.pm"} = '#line '.(1+__LINE__).' "'
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_PLUGIN_HEADERCONDITION
@@ -31390,7 +32857,7 @@ $fatpacked{"Mojolicious/Plugin/JSONConfig.pm"} = '#line '.(1+__LINE__).' "'.__FI
     $prepend .= q[my $app = shift; sub app; local *app = sub { $app };];
     $prepend .= q[use Mojo::Base -strict; no warnings 'ambiguous';];
   
-    my $mt = Mojo::Template->new($conf->{template} || {})->name($file);
+    my $mt     = Mojo::Template->new($conf->{template} || {})->name($file);
     my $output = $mt->prepend($prepend . $mt->prepend)->render($content, $app);
     return ref $output ? die $output : $output;
   }
@@ -31426,7 +32893,7 @@ $fatpacked{"Mojolicious/Plugin/JSONConfig.pm"} = '#line '.(1+__LINE__).' "'.__FI
     say $config->{foo};
   
     # foo.html.ep
-    %= $config->{foo}
+    %= config->{foo}
   
     # The configuration is available application-wide
     my $config = app->config;
@@ -31446,8 +32913,8 @@ $fatpacked{"Mojolicious/Plugin/JSONConfig.pm"} = '#line '.(1+__LINE__).' "'.__FI
   extend the normal configuration file C<$moniker.json> with C<mode> specific ones
   like C<$moniker.$mode.json>, which will be detected automatically.
   
-  If the configuration value C<config_override> has been set in L<Mojo/"config">
-  when this plugin is loaded, it will not do anything.
+  If the configuration value C<config_override> has been set in
+  L<Mojolicious/"config"> when this plugin is loaded, it will not do anything.
   
   The code of this plugin is a good example for learning to build new plugins,
   you're welcome to fork it.
@@ -31508,7 +32975,7 @@ $fatpacked{"Mojolicious/Plugin/JSONConfig.pm"} = '#line '.(1+__LINE__).' "'.__FI
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_PLUGIN_JSONCONFIG
@@ -31592,217 +33059,17 @@ $fatpacked{"Mojolicious/Plugin/Mount.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_PLUGIN_MOUNT
-
-$fatpacked{"Mojolicious/Plugin/PODRenderer.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_PLUGIN_PODRENDERER';
-  package Mojolicious::Plugin::PODRenderer;
-  use Mojo::Base 'Mojolicious::Plugin';
-  
-  use Mojo::Asset::File;
-  use Mojo::ByteStream;
-  use Mojo::DOM;
-  use Mojo::File 'path';
-  use Mojo::URL;
-  use Pod::Simple::XHTML;
-  use Pod::Simple::Search;
-  
-  sub register {
-    my ($self, $app, $conf) = @_;
-  
-    my $preprocess = $conf->{preprocess} || 'ep';
-    $app->renderer->add_handler(
-      $conf->{name} || 'pod' => sub {
-        my ($renderer, $c, $output, $options) = @_;
-        $renderer->handlers->{$preprocess}($renderer, $c, $output, $options);
-        $$output = _pod_to_html($$output) if defined $$output;
-      }
-    );
-  
-    $app->helper(
-      pod_to_html => sub { shift; Mojo::ByteStream->new(_pod_to_html(@_)) });
-  
-    # Perldoc browser
-    return undef if $conf->{no_perldoc};
-    my $defaults = {module => 'Mojolicious/Guides', format => 'html'};
-    return $app->routes->any(
-      '/perldoc/:module' => $defaults => [module => qr/[^.]+/] => \&_perldoc);
-  }
-  
-  sub _indentation {
-    (sort map {/^(\s+)/} @{shift()})[0];
-  }
-  
-  sub _html {
-    my ($c, $src) = @_;
-  
-    # Rewrite links
-    my $dom     = Mojo::DOM->new(_pod_to_html($src));
-    my $perldoc = $c->url_for('/perldoc/');
-    $_->{href} =~ s!^https://metacpan\.org/pod/!$perldoc!
-      and $_->{href} =~ s!::!/!gi
-      for $dom->find('a[href]')->map('attr')->each;
-  
-    # Rewrite code blocks for syntax highlighting and correct indentation
-    for my $e ($dom->find('pre > code')->each) {
-      next if (my $str = $e->content) =~ /^\s*(?:\$|Usage:)\s+/m;
-      next unless $str =~ /[\$\@\%]\w|-&gt;\w|^use\s+\w/m;
-      my $attrs = $e->attr;
-      my $class = $attrs->{class};
-      $attrs->{class} = defined $class ? "$class prettyprint" : 'prettyprint';
-    }
-  
-    # Rewrite headers
-    my $toc = Mojo::URL->new->fragment('toc');
-    my @parts;
-    for my $e ($dom->find('h1, h2, h3, h4')->each) {
-  
-      push @parts, [] if $e->tag eq 'h1' || !@parts;
-      my $link = Mojo::URL->new->fragment($e->{id});
-      push @{$parts[-1]}, my $text = $e->all_text, $link;
-      my $permalink = $c->link_to('#' => $link, class => 'permalink');
-      $e->content($permalink . $c->link_to($text => $toc));
-    }
-  
-    # Try to find a title
-    my $title = 'Perldoc';
-    $dom->find('h1 + p')->first(sub { $title = shift->text });
-  
-    # Combine everything to a proper response
-    $c->content_for(perldoc => "$dom");
-    $c->render('mojo/perldoc', title => $title, parts => \@parts);
-  }
-  
-  sub _perldoc {
-    my $c = shift;
-  
-    # Find module or redirect to CPAN
-    my $module = join '::', split('/', $c->param('module'));
-    $c->stash(cpan => "https://metacpan.org/pod/$module");
-    my $path
-      = Pod::Simple::Search->new->find($module, map { $_, "$_/pods" } @INC);
-    return $c->redirect_to($c->stash('cpan')) unless $path && -r $path;
-  
-    my $src = path($path)->slurp;
-    $c->respond_to(txt => {data => $src}, html => sub { _html($c, $src) });
-  }
-  
-  sub _pod_to_html {
-    return '' unless defined(my $pod = ref $_[0] eq 'CODE' ? shift->() : shift);
-  
-    my $parser = Pod::Simple::XHTML->new;
-    $parser->perldoc_url_prefix('https://metacpan.org/pod/');
-    $parser->$_('') for qw(html_header html_footer);
-    $parser->strip_verbatim_indent(\&_indentation);
-    $parser->output_string(\(my $output));
-    return $@ unless eval { $parser->parse_string_document("$pod"); 1 };
-  
-    return $output;
-  }
-  
-  1;
-  
-  =encoding utf8
-  
-  =head1 NAME
-  
-  Mojolicious::Plugin::PODRenderer - POD renderer plugin
-  
-  =head1 SYNOPSIS
-  
-    # Mojolicious (with documentation browser under "/perldoc")
-    my $route = $app->plugin('PODRenderer');
-    my $route = $app->plugin(PODRenderer => {name => 'foo'});
-    my $route = $app->plugin(PODRenderer => {preprocess => 'epl'});
-  
-    # Mojolicious::Lite (with documentation browser under "/perldoc")
-    my $route = plugin 'PODRenderer';
-    my $route = plugin PODRenderer => {name => 'foo'};
-    my $route = plugin PODRenderer => {preprocess => 'epl'};
-  
-    # Without documentation browser
-    plugin PODRenderer => {no_perldoc => 1};
-  
-    # foo.html.ep
-    %= pod_to_html "=head1 TEST\n\nC<123>"
-  
-    # foo.html.pod
-    =head1 <%= uc 'test' %>
-  
-  =head1 DESCRIPTION
-  
-  L<Mojolicious::Plugin::PODRenderer> is a renderer for true Perl hackers, rawr!
-  
-  The code of this plugin is a good example for learning to build new plugins,
-  you're welcome to fork it.
-  
-  See L<Mojolicious::Plugins/"PLUGINS"> for a list of plugins that are available
-  by default.
-  
-  =head1 OPTIONS
-  
-  L<Mojolicious::Plugin::PODRenderer> supports the following options.
-  
-  =head2 name
-  
-    # Mojolicious::Lite
-    plugin PODRenderer => {name => 'foo'};
-  
-  Handler name, defaults to C<pod>.
-  
-  =head2 no_perldoc
-  
-    # Mojolicious::Lite
-    plugin PODRenderer => {no_perldoc => 1};
-  
-  Disable L<Mojolicious::Guides> documentation browser that will otherwise be
-  available under C</perldoc>.
-  
-  =head2 preprocess
-  
-    # Mojolicious::Lite
-    plugin PODRenderer => {preprocess => 'epl'};
-  
-  Name of handler used to preprocess POD, defaults to C<ep>.
-  
-  =head1 HELPERS
-  
-  L<Mojolicious::Plugin::PODRenderer> implements the following helpers.
-  
-  =head2 pod_to_html
-  
-    %= pod_to_html '=head2 lalala'
-    <%= pod_to_html begin %>=head2 lalala<% end %>
-  
-  Render POD to HTML without preprocessing.
-  
-  =head1 METHODS
-  
-  L<Mojolicious::Plugin::PODRenderer> inherits all methods from
-  L<Mojolicious::Plugin> and implements the following new ones.
-  
-  =head2 register
-  
-    my $route = $plugin->register(Mojolicious->new);
-    my $route = $plugin->register(Mojolicious->new, {name => 'foo'});
-  
-  Register renderer and helper in L<Mojolicious> application.
-  
-  =head1 SEE ALSO
-  
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
-  
-  =cut
-MOJOLICIOUS_PLUGIN_PODRENDERER
 
 $fatpacked{"Mojolicious/Plugin/TagHelpers.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'MOJOLICIOUS_PLUGIN_TAGHELPERS';
   package Mojolicious::Plugin::TagHelpers;
   use Mojo::Base 'Mojolicious::Plugin';
   
   use Mojo::ByteStream;
-  use Mojo::DOM::HTML;
+  use Mojo::DOM::HTML 'tag_to_html';
   use Scalar::Util 'blessed';
   
   sub register {
@@ -31824,11 +33091,11 @@ $fatpacked{"Mojolicious/Plugin/TagHelpers.pm"} = '#line '.(1+__LINE__).' "'.__FI
     $app->helper(button_to => sub { _button_to(0, @_) });
     $app->helper(check_box => sub { _input(@_, type => 'checkbox') });
     $app->helper(csrf_button_to => sub { _button_to(1, @_) });
-    $app->helper(file_field => sub { _empty_field('file', @_) });
+    $app->helper(file_field     => sub { _empty_field('file', @_) });
     $app->helper(image => sub { _tag('img', src => shift->url_for(shift), @_) });
     $app->helper(input_tag      => sub { _input(@_) });
     $app->helper(password_field => sub { _empty_field('password', @_) });
-    $app->helper(radio_button   => sub { _input(@_, type => 'radio') });
+    $app->helper(radio_button => sub { _input(@_, type => 'radio') });
   
     # "t" is just a shortcut for the "tag" helper
     $app->helper($_ => sub { shift; _tag(@_) }) for qw(t tag);
@@ -31934,7 +33201,7 @@ $fatpacked{"Mojolicious/Plugin/TagHelpers.pm"} = '#line '.(1+__LINE__).' "'.__FI
   sub _select_field {
     my ($c, $name, $options, %attrs) = (shift, shift, shift, @_);
   
-    my %values = map { $_ => 1 } @{$c->every_param($name)};
+    my %values = map { $_ => 1 } grep {defined} @{$c->every_param($name)};
   
     my $groups = '';
     for my $group (@$options) {
@@ -31966,21 +33233,7 @@ $fatpacked{"Mojolicious/Plugin/TagHelpers.pm"} = '#line '.(1+__LINE__).' "'.__FI
     return _tag('input', value => $value, @_, type => 'submit');
   }
   
-  sub _tag {
-    my $tree = ['tag', shift, undef, undef];
-  
-    # Content
-    if (ref $_[-1] eq 'CODE') { push @$tree, ['raw', pop->()] }
-    elsif (@_ % 2) { push @$tree, ['text', pop] }
-  
-    # Attributes
-    my $attrs = $tree->[2] = {@_};
-    if (ref $attrs->{data} eq 'HASH' && (my $data = delete $attrs->{data})) {
-      @$attrs{map { y/_/-/; lc "data-$_" } keys %$data} = values %$data;
-    }
-  
-    return Mojo::ByteStream->new(Mojo::DOM::HTML::_render($tree));
-  }
+  sub _tag { Mojo::ByteStream->new(tag_to_html(@_)) }
   
   sub _tag_with_error {
     my ($c, $tag) = (shift, shift);
@@ -32001,7 +33254,7 @@ $fatpacked{"Mojolicious/Plugin/TagHelpers.pm"} = '#line '.(1+__LINE__).' "'.__FI
   
   sub _validation {
     my ($c, $name) = (shift, shift);
-    return _tag(@_) unless $c->validation->has_error($name);
+    return _tag(@_) unless $c->helpers->validation->has_error($name);
     return $c->helpers->tag_with_error(@_);
   }
   
@@ -32037,9 +33290,10 @@ $fatpacked{"Mojolicious/Plugin/TagHelpers.pm"} = '#line '.(1+__LINE__).' "'.__FI
     <%= radio_button country => 'france'  %> France
     <%= radio_button country => 'uk'      %> UK
   
-  For fields that failed validation with L<Mojolicious::Controller/"validation">
-  the C<field-with-error> class will be automatically added through
-  L</"tag_with_error">, to make styling with CSS easier.
+  For fields that failed validation with
+  L<Mojolicious::Plugin::DefaultHelpers/"validation"> the C<field-with-error>
+  class will be automatically added through L</"tag_with_error">, to make styling
+  with CSS easier.
   
     <input class="field-with-error" name="age" type="text" value="250">
   
@@ -32253,6 +33507,7 @@ $fatpacked{"Mojolicious/Plugin/TagHelpers.pm"} = '#line '.(1+__LINE__).' "'.__FI
   =head2 javascript
   
     %= javascript '/script.js'
+    %= javascript '/script.js', defer => undef
     %= javascript begin
       var a = 'b';
     % end
@@ -32260,6 +33515,7 @@ $fatpacked{"Mojolicious/Plugin/TagHelpers.pm"} = '#line '.(1+__LINE__).' "'.__FI
   Generate portable C<script> tag for JavaScript asset.
   
     <script src="/path/to/script.js"></script>
+    <script defer src="/path/to/script.js"></script>
     <script><![CDATA[
       var a = 'b';
     ]]></script>
@@ -32296,7 +33552,7 @@ $fatpacked{"Mojolicious/Plugin/TagHelpers.pm"} = '#line '.(1+__LINE__).' "'.__FI
     %= link_to Contact => 'mailto:sri@example.com'
     <%= link_to index => begin %>Home<% end %>
     <%= link_to '/file.txt' => begin %>File<% end %>
-    <%= link_to 'http://mojolicious.org' => begin %>Mojolicious<% end %>
+    <%= link_to 'https://mojolicious.org' => begin %>Mojolicious<% end %>
     <%= link_to url_for->query(foo => 'bar')->to_abs => begin %>Retry<% end %>
   
   Generate portable C<a> tag with L<Mojolicious::Controller/"url_for">, defaults
@@ -32310,7 +33566,7 @@ $fatpacked{"Mojolicious/Plugin/TagHelpers.pm"} = '#line '.(1+__LINE__).' "'.__FI
     <a href="mailto:sri@example.com">Contact</a>
     <a href="/path/to/index">Home</a>
     <a href="/path/to/file.txt">File</a>
-    <a href="http://mojolicious.org">Mojolicious</a>
+    <a href="https://mojolicious.org">Mojolicious</a>
     <a href="http://127.0.0.1:3000/current/path?foo=bar">Retry</a>
   
   =head2 month_field
@@ -32432,6 +33688,7 @@ $fatpacked{"Mojolicious/Plugin/TagHelpers.pm"} = '#line '.(1+__LINE__).' "'.__FI
   =head2 stylesheet
   
     %= stylesheet '/foo.css'
+    %= stylesheet '/foo.css', title => 'Foo style'
     %= stylesheet begin
       body {color: #000}
     % end
@@ -32439,6 +33696,7 @@ $fatpacked{"Mojolicious/Plugin/TagHelpers.pm"} = '#line '.(1+__LINE__).' "'.__FI
   Generate portable C<style> or C<link> tag for CSS asset.
   
     <link href="/path/to/foo.css" rel="stylesheet">
+    <link href="/path/to/foo.css" rel="stylesheet" title="Foo style">
     <style><![CDATA[
       body {color: #000}
     ]]></style>
@@ -32466,16 +33724,15 @@ $fatpacked{"Mojolicious/Plugin/TagHelpers.pm"} = '#line '.(1+__LINE__).' "'.__FI
     %= tag 'br'
     %= tag 'div'
     %= tag 'div', id => 'foo', hidden => undef
-    %= tag div => 'test & 123'
-    %= tag div => (id => 'foo') => 'test & 123'
-    %= tag div => (data => {my_id => 1, Name => 'test'}) => 'test & 123'
+    %= tag 'div', 'test & 123'
+    %= tag 'div', id => 'foo', 'test & 123'
+    %= tag 'div', data => {my_id => 1, Name => 'test'}, 'test & 123'
     %= tag div => begin
       test & 123
     % end
     <%= tag div => (id => 'foo') => begin %>test & 123<% end %>
   
-  HTML tag generator, the C<data> attribute may contain a hash reference with
-  key/value pairs to generate attributes from.
+  Alias for L<Mojo::DOM/"new_tag">.
   
     <br>
     <div></div>
@@ -32492,8 +33749,8 @@ $fatpacked{"Mojolicious/Plugin/TagHelpers.pm"} = '#line '.(1+__LINE__).' "'.__FI
   
     my $output = $c->tag('meta');
     my $output = $c->tag('meta', charset => 'UTF-8');
-    my $output = $c->tag(div => '<p>This will be escaped</p>');
-    my $output = $c->tag(div => sub { '<p>This will not be escaped</p>' });
+    my $output = $c->tag('div', '<p>This will be escaped</p>');
+    my $output = $c->tag('div', sub { '<p>This will not be escaped</p>' });
   
   Results are automatically wrapped in L<Mojo::ByteStream> objects to prevent
   accidental double escaping in C<ep> templates.
@@ -32567,15 +33824,15 @@ $fatpacked{"Mojolicious/Plugin/TagHelpers.pm"} = '#line '.(1+__LINE__).' "'.__FI
   =head2 url_field
   
     %= url_field 'address'
-    %= url_field address => 'http://mojolicious.org'
-    %= url_field address => 'http://mojolicious.org', id => 'foo'
+    %= url_field address => 'https://mojolicious.org'
+    %= url_field address => 'https://mojolicious.org', id => 'foo'
   
   Generate C<input> tag of type C<url>. Previous input values will automatically
   get picked up and shown as default.
   
     <input name="address" type="url">
-    <input name="address" type="url" value="http://mojolicious.org">
-    <input id="foo" name="address" type="url" value="http://mojolicious.org">
+    <input name="address" type="url" value="https://mojolicious.org">
+    <input id="foo" name="address" type="url" value="https://mojolicious.org">
   
   =head2 week_field
   
@@ -32603,7 +33860,7 @@ $fatpacked{"Mojolicious/Plugin/TagHelpers.pm"} = '#line '.(1+__LINE__).' "'.__FI
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_PLUGIN_TAGHELPERS
@@ -32645,7 +33902,7 @@ $fatpacked{"Mojolicious/Plugins.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
     my ($self, $name) = @_;
   
     # Try all namespaces and full module name
-    my $suffix = $name =~ /^[a-z]/ ? camelize $name : $name;
+    my $suffix  = $name =~ /^[a-z]/ ? camelize $name : $name;
     my @classes = map {"${_}::$suffix"} @{$self->namespaces};
     for my $class (@classes, $name) { return $class->new if _load($class) }
   
@@ -32716,11 +33973,6 @@ $fatpacked{"Mojolicious/Plugins.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
   =item L<Mojolicious::Plugin::Mount>
   
   Mount whole L<Mojolicious> applications.
-  
-  =item L<Mojolicious::Plugin::PODRenderer>
-  
-  Renderer for turning POD into HTML and documentation browser for
-  L<Mojolicious::Guides>.
   
   =item L<Mojolicious::Plugin::TagHelpers>
   
@@ -32799,7 +34051,7 @@ $fatpacked{"Mojolicious/Plugins.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_PLUGINS
@@ -32809,23 +34061,23 @@ $fatpacked{"Mojolicious/Renderer.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   use Mojo::Base -base;
   
   use Mojo::Cache;
+  use Mojo::DynamicMethods;
   use Mojo::File 'path';
   use Mojo::JSON 'encode_json';
-  use Mojo::Home;
   use Mojo::Loader 'data_section';
-  use Mojo::Util qw(decamelize encode md5_sum monkey_patch);
+  use Mojo::Util qw(decamelize encode gzip md5_sum monkey_patch);
   
   has cache   => sub { Mojo::Cache->new };
   has classes => sub { ['main'] };
-  has default_format => 'html';
-  has 'default_handler';
-  has encoding => 'UTF-8';
+  has [qw(compress default_handler)];
+  has default_format         => 'html';
+  has encoding               => 'UTF-8';
   has [qw(handlers helpers)] => sub { {} };
-  has paths => sub { [] };
+  has min_compress_size      => 860;
+  has paths                  => sub { [] };
   
   # Bundled templates
-  my $TEMPLATES = Mojo::Home->new->mojo_lib_dir->child('Mojolicious', 'resources',
-    'templates');
+  my $TEMPLATES = path(__FILE__)->sibling('resources', 'templates');
   
   sub DESTROY { Mojo::Util::_teardown($_) for @{shift->{namespaces}} }
   
@@ -32833,11 +34085,10 @@ $fatpacked{"Mojolicious/Renderer.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
     my ($self, $c) = (shift, shift);
   
     # List representations
-    my $req = $c->req;
-    my @exts = @{$c->app->types->detect($req->headers->accept, $req->is_xhr)};
-    if (!@exts && (my $format = $c->stash->{format} || $req->param('format'))) {
-      push @exts, $format;
-    }
+    my $req  = $c->req;
+    my $fmt  = $req->param('format') || $c->stash->{format};
+    my @exts = $fmt ? ($fmt) : ();
+    push @exts, @{$c->app->types->detect($req->headers->accept)};
     return \@exts unless @_;
   
     # Find best representation
@@ -32849,8 +34100,13 @@ $fatpacked{"Mojolicious/Renderer.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
   sub add_helper {
     my ($self, $name, $cb) = @_;
+  
     $self->helpers->{$name} = $cb;
     delete $self->{proxy};
+    $cb = $self->get_helper($name) if $name =~ s/\..*$//;
+    Mojo::DynamicMethods::register $_, $self, $name, $cb
+      for qw(Mojolicious Mojolicious::Controller);
+  
     return $self;
   }
   
@@ -32867,7 +34123,7 @@ $fatpacked{"Mojolicious/Renderer.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
     my $found;
     my $class = 'Mojolicious::Renderer::Helpers::' . md5_sum "$name:$self";
-    my $re = length $name ? qr/^(\Q$name\E\.([^.]+))/ : qr/^(([^.]+))/;
+    my $re    = length $name ? qr/^(\Q$name\E\.([^.]+))/ : qr/^(([^.]+))/;
     for my $key (keys %{$self->helpers}) {
       $key =~ $re ? ($found, my $method) = (1, $2) : next;
       my $sub = $self->get_helper($1);
@@ -32881,18 +34137,7 @@ $fatpacked{"Mojolicious/Renderer.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   sub render {
     my ($self, $c, $args) = @_;
   
-    # Localize "extends" and "layout" to allow argument overrides
-    my $stash = $c->stash;
-    local $stash->{layout}  = $stash->{layout}  if exists $stash->{layout};
-    local $stash->{extends} = $stash->{extends} if exists $stash->{extends};
-  
-    # Rendering to string
-    local @{$stash}{keys %$args} if my $string = delete $args->{'mojo.string'};
-    delete @{$stash}{qw(layout extends)} if $string;
-  
-    # All other arguments just become part of the stash
-    @$stash{keys %$args} = values %$args;
-  
+    my $stash   = $c->stash;
     my $options = {
       encoding => $self->encoding,
       handler  => $stash->{handler},
@@ -32928,8 +34173,28 @@ $fatpacked{"Mojolicious/Renderer.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
       $content->{content} //= $output if $output =~ /\S/;
     }
   
-    return $string ? $output : _maybe($options->{encoding}, $output),
-      $options->{format};
+    return $output if $args->{'mojo.string'};
+    return _maybe($options->{encoding}, $output), $options->{format};
+  }
+  
+  sub respond {
+    my ($self, $c, $output, $format, $status) = @_;
+  
+    # Gzip compression
+    my $res = $c->res;
+    if ($self->compress && length($output) >= $self->min_compress_size) {
+      my $headers = $res->headers;
+      $headers->append(Vary => 'Accept-Encoding');
+      my $gzip = ($c->req->headers->accept_encoding // '') =~ /gzip/i;
+      if ($gzip && !$headers->content_encoding) {
+        $headers->content_encoding('gzip');
+        $output = gzip $output;
+      }
+    }
+  
+    $res->body($output);
+    $c->app->types->content_type($c, {ext => $format});
+    return !!$c->rendered($status);
   }
   
   sub template_for {
@@ -33074,13 +34339,23 @@ $fatpacked{"Mojolicious/Renderer.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
     # Add another class with templates in DATA section and higher precedence
     unshift @{$renderer->classes}, 'Mojolicious::Plugin::MoreFun';
   
+  =head2 compress
+  
+    my $bool  = $renderer->compress;
+    $renderer = $renderer->compress($bool);
+  
+  Try to negotiate compression for dynamically generated response content and
+  C<gzip> compress it automatically, defaults to false. Note that this attribute
+  is B<EXPERIMENTAL> and might change without warning!
+  
   =head2 default_format
   
     my $default = $renderer->default_format;
     $renderer   = $renderer->default_format('html');
   
   The default format to render if C<format> is not set in the stash, defaults to
-  C<html>.
+  C<html>. Note that changing the default away from C<html> is not recommended, as
+  it has the potential to break, for example, plugins with bundled templates.
   
   =head2 default_handler
   
@@ -33113,6 +34388,15 @@ $fatpacked{"Mojolicious/Renderer.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
   Registered helpers.
   
+  =head2 min_compress_size
+  
+    my $size  = $renderer->min_compress_size;
+    $renderer = $renderer->min_compress_size(1024);
+  
+  Minimum output size in bytes required for compression to be used if enabled,
+  defaults to C<860>. Note that this attribute is B<EXPERIMENTAL> and might change
+  without warning!
+  
   =head2 paths
   
     my $paths = $renderer->paths;
@@ -33137,12 +34421,9 @@ $fatpacked{"Mojolicious/Renderer.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
     my $best = $renderer->accepts(Mojolicious::Controller->new, 'html', 'json');
   
   Select best possible representation for L<Mojolicious::Controller> object from
-  C<Accept> request header, C<format> stash value or C<format> C<GET>/C<POST>
-  parameter, defaults to returning the first extension if no preference could be
-  detected. Since browsers often don't really know what they actually want,
-  unspecific C<Accept> request headers with more than one MIME type will be
-  ignored, unless the C<X-Requested-With> header is set to the value
-  C<XMLHttpRequest>.
+  C<format> C<GET>/C<POST> parameter, C<format> stash value, or C<Accept> request
+  header, defaults to returning the first extension if no preference could be
+  detected.
   
   =head2 add_handler
   
@@ -33198,6 +34479,16 @@ $fatpacked{"Mojolicious/Renderer.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   Render output through one of the renderers. See
   L<Mojolicious::Controller/"render"> for a more user-friendly interface.
   
+  =head2 respond
+  
+    my $bool = $renderer->respond(Mojolicious::Controller->new, $output, $format);
+    my $bool = $renderer->respond(
+      Mojolicious::Controller->new, $output, $format, $status);
+  
+  Finalize dynamically generated response content and L</"compress"> it if
+  possible. Note that this method is B<EXPERIMENTAL> and might change without
+  warning!
+  
   =head2 template_for
   
     my $name = $renderer->template_for(Mojolicious::Controller->new);
@@ -33247,7 +34538,7 @@ $fatpacked{"Mojolicious/Renderer.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_RENDERER
@@ -33258,19 +34549,29 @@ $fatpacked{"Mojolicious/Routes.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   
   use List::Util 'first';
   use Mojo::Cache;
+  use Mojo::DynamicMethods;
   use Mojo::Loader 'load_class';
   use Mojo::Util 'camelize';
   use Mojolicious::Routes::Match;
-  use Scalar::Util 'weaken';
   
-  has base_classes => sub { [qw(Mojolicious::Controller Mojo)] };
+  has base_classes => sub { [qw(Mojolicious::Controller Mojolicious)] };
   has cache        => sub { Mojo::Cache->new };
   has [qw(conditions shortcuts)] => sub { {} };
-  has hidden     => sub { [qw(attr has new tap)] };
-  has namespaces => sub { [] };
+  has types                      => sub { {num => qr/[0-9]+/} };
+  has hidden                     => sub { [qw(attr has new tap)] };
+  has namespaces                 => sub { [] };
   
   sub add_condition { $_[0]->conditions->{$_[1]} = $_[2] and return $_[0] }
-  sub add_shortcut  { $_[0]->shortcuts->{$_[1]}  = $_[2] and return $_[0] }
+  
+  sub add_shortcut {
+    my ($self, $name, $cb) = @_;
+    $self->shortcuts->{$name} = $cb;
+    Mojo::DynamicMethods::register 'Mojolicious::Routes::Route', $self, $name,
+      $cb;
+    return $self;
+  }
+  
+  sub add_type { $_[0]->types->{$_[1]} = $_[2] and return $_[0] }
   
   sub continue {
     my ($self, $c) = @_;
@@ -33316,15 +34617,15 @@ $fatpacked{"Mojolicious/Routes.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     # Path (partial path gets priority)
     my $req  = $c->req;
     my $path = $c->stash->{path};
-    if (defined $path) { $path = "/$path" if $path !~ m!^/! }
-    else               { $path = $req->url->path->to_route }
+    if   (defined $path) { $path = "/$path" if $path !~ m!^/! }
+    else                 { $path = $req->url->path->to_route }
   
     # Method (HEAD will be treated as GET)
     my $method = uc($req->url->query->clone->param('_method') || $req->method);
     $method = 'GET' if $method eq 'HEAD';
   
     # Check cache
-    my $ws = $c->tx->is_websocket ? 1 : 0;
+    my $ws    = $c->tx->is_websocket ? 1 : 0;
     my $match = Mojolicious::Routes::Match->new(root => $self);
     $c->match($match);
     my $cache = $self->cache;
@@ -33334,7 +34635,7 @@ $fatpacked{"Mojolicious/Routes.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   
     # Check routes
     $match->find($c => {method => $method, path => $path, websocket => $ws});
-    return unless my $route = $match->endpoint;
+    return undef unless my $route = $match->endpoint;
     $cache->set(
       "$method:$path:$ws" => {endpoint => $route, stack => $match->stack});
   }
@@ -33362,8 +34663,8 @@ $fatpacked{"Mojolicious/Routes.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   
     # Specific namespace
     elsif (defined(my $ns = $field->{namespace})) {
-      if ($class) { push @classes, $ns ? "${ns}::$class" : $class }
-      elsif ($ns) { push @classes, $ns }
+      if    ($class) { push @classes, $ns ? "${ns}::$class" : $class }
+      elsif ($ns)    { push @classes, $ns }
     }
   
     # All namespaces
@@ -33378,9 +34679,7 @@ $fatpacked{"Mojolicious/Routes.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
       return !$log->debug(qq{Class "$class" is not a controller}) unless $found;
   
       # Success
-      my $new = $class->new(%$c);
-      weaken $new->{$_} for qw(app tx);
-      return $new;
+      return $class->new(%$c);
     }
   
     # Nothing found
@@ -33399,13 +34698,13 @@ $fatpacked{"Mojolicious/Routes.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     my $class = ref $new;
     my $app   = $old->app;
     my $log   = $app->log;
-    if ($new->isa('Mojo')) {
+    if ($new->isa('Mojolicious')) {
       $log->debug(qq{Routing to application "$class"});
   
       # Try to connect routes
       if (my $sub = $new->can('routes')) {
         my $r = $new->$sub;
-        weaken $r->parent($old->match->endpoint)->{parent} unless $r->parent;
+        $r->parent($old->match->endpoint) unless $r->parent;
       }
       $new->handler($old);
       $old->stash->{'mojo.routed'} = 1;
@@ -33476,6 +34775,17 @@ $fatpacked{"Mojolicious/Routes.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   
   See L<Mojolicious::Guides::Routing> for more.
   
+  =head1 TYPES
+  
+  These placeholder types are available by default.
+  
+  =head2 num
+  
+    $r->get('/article/<id:num>');
+  
+  Placeholder value needs to be a non-fractional number, similar to the regular
+  expression C<([0-9]+)>.
+  
   =head1 ATTRIBUTES
   
   L<Mojolicious::Routes> inherits all attributes from
@@ -33487,7 +34797,7 @@ $fatpacked{"Mojolicious/Routes.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     $r          = $r->base_classes(['MyApp::Controller']);
   
   Base classes used to identify controllers, defaults to
-  L<Mojolicious::Controller> and L<Mojo>.
+  L<Mojolicious::Controller> and L<Mojolicious>.
   
   =head2 cache
   
@@ -33528,6 +34838,13 @@ $fatpacked{"Mojolicious/Routes.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   
   Contains all available shortcuts.
   
+  =head2 types
+  
+    my $types = $r->types;
+    $r        = $r->types({lower => qr/[a-z]+/});
+  
+  Registered placeholder types, by default only L</"num"> is already defined.
+  
   =head1 METHODS
   
   L<Mojolicious::Routes> inherits all methods from L<Mojolicious::Routes::Route>
@@ -33555,6 +34872,15 @@ $fatpacked{"Mojolicious/Routes.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
       my ($route, @args) = @_;
       ...
     });
+  
+  =head2 add_type
+  
+    $r = $r->add_type(foo => qr/\w+/);
+    $r = $r->add_type(foo => ['bar', 'baz']);
+  
+  Register a placeholder type.
+  
+    $r->add_type(lower => qr/[a-z]+/);
   
   =head2 continue
   
@@ -33596,7 +34922,7 @@ $fatpacked{"Mojolicious/Routes.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_ROUTES
@@ -33609,7 +34935,7 @@ $fatpacked{"Mojolicious/Routes/Match.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
   
   has [qw(endpoint root)];
   has position => 0;
-  has stack => sub { [] };
+  has stack    => sub { [] };
   
   sub find { $_[0]->_match($_[0]->root, $_[1], $_[2]) }
   
@@ -33688,10 +35014,10 @@ $fatpacked{"Mojolicious/Routes/Match.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
     }
   
     # Match children
-    my @snapshot = $r->parent ? ([@{$self->stack}], $captures) : ([], {});
+    my $snapshot = $r->parent ? [@{$self->stack}] : [];
     for my $child (@{$r->children}) {
       return 1 if $self->_match($child, $c, $options);
-      $self->stack([@{$snapshot[0]}])->{captures} = $snapshot[1];
+      $self->stack([@$snapshot]);
     }
   }
   
@@ -33788,7 +35114,7 @@ $fatpacked{"Mojolicious/Routes/Match.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_ROUTES_MATCH
@@ -33797,11 +35123,13 @@ $fatpacked{"Mojolicious/Routes/Pattern.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
   package Mojolicious::Routes::Pattern;
   use Mojo::Base -base;
   
-  has [qw(constraints defaults)] => sub { {} };
-  has placeholder_start => ':';
-  has [qw(placeholders tree)] => sub { [] };
-  has quote_end   => ')';
-  has quote_start => '(';
+  use Carp 'croak';
+  
+  has [qw(constraints defaults types)]   => sub { {} };
+  has [qw(placeholder_start type_start)] => ':';
+  has [qw(placeholders tree)]            => sub { [] };
+  has quote_end   => '>';
+  has quote_start => '<';
   has [qw(regex unparsed)];
   has relaxed_start  => '#';
   has wildcard_start => '*';
@@ -33847,29 +35175,32 @@ $fatpacked{"Mojolicious/Routes/Pattern.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
   sub render {
     my ($self, $values, $endpoint) = @_;
   
+    my $start = $self->type_start;
+  
     # Placeholders can only be optional without a format
     my $optional = !(my $format = $values->{format});
   
     my $str = '';
     for my $token (reverse @{$self->tree}) {
       my ($op, $value) = @$token;
-      my $fragment = '';
+      my $part = '';
   
       # Text
-      if ($op eq 'text') { ($fragment, $optional) = ($value, 0) }
+      if ($op eq 'text') { ($part, $optional) = ($value, 0) }
   
       # Slash
-      elsif ($op eq 'slash') { $fragment = '/' unless $optional }
+      elsif ($op eq 'slash') { $part = '/' unless $optional }
   
       # Placeholder
       else {
-        my $default = $self->defaults->{$value};
-        $fragment = $values->{$value} // $default // '';
-        if (!defined $default || ($default ne $fragment)) { $optional = 0 }
-        elsif ($optional) { $fragment = '' }
+        my $name    = (split $start, $value)[0] // '';
+        my $default = $self->defaults->{$name};
+        $part = $values->{$name} // $default // '';
+        if (!defined $default || ($default ne $part)) { $optional = 0 }
+        elsif ($optional) { $part = '' }
       }
   
-      $str = $fragment . $str;
+      $str = $part . $str;
     }
   
     # Format can be optional
@@ -33882,15 +35213,17 @@ $fatpacked{"Mojolicious/Routes/Pattern.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
     my $placeholders = $self->placeholders;
     my $constraints  = $self->constraints;
     my $defaults     = $self->defaults;
+    my $start        = $self->type_start;
+    my $types        = $self->types;
   
-    my $block = my $regex = '';
+    my $block    = my $regex = '';
     my $optional = 1;
     for my $token (reverse @{$self->tree}) {
       my ($op, $value, $type) = @$token;
-      my $fragment = '';
+      my $part = '';
   
       # Text
-      if ($op eq 'text') { ($fragment, $optional) = (quotemeta $value, 0) }
+      if ($op eq 'text') { ($part, $optional) = (quotemeta $value, 0) }
   
       # Slash
       elsif ($op eq 'slash') {
@@ -33901,17 +35234,22 @@ $fatpacked{"Mojolicious/Routes/Pattern.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
   
       # Placeholder
       else {
+        if ($value =~ /^(.+)\Q$start\E(.+)$/) {
+          ($value, $part) = ($1, _compile_req($types->{$2} // '?!'));
+        }
+        else {
+          $part = $type ? $type eq 'relaxed' ? '([^/]+)' : '(.+)' : '([^/.]+)';
+        }
         unshift @$placeholders, $value;
-        $fragment = $type ? $type eq 'relaxed' ? '([^/]+)' : '(.+)' : '([^/.]+)';
   
         # Custom regex
-        if (my $c = $constraints->{$value}) { $fragment = _compile_req($c) }
+        if (my $c = $constraints->{$value}) { $part = _compile_req($c) }
   
         # Optional placeholder
-        exists $defaults->{$value} ? ($fragment .= '?') : ($optional = 0);
+        exists $defaults->{$value} ? ($part .= '?') : ($optional = 0);
       }
   
-      $block = $fragment . $block;
+      $block = $part . $block;
     }
   
     # Not rooted with a slash
@@ -33953,18 +35291,20 @@ $fatpacked{"Mojolicious/Routes/Pattern.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
     my $relaxed     = $self->relaxed_start;
     my $wildcard    = $self->wildcard_start;
   
-    my (@tree, $spec);
+    my (@tree, $spec, $more);
     for my $char (split '', $pattern) {
   
       # Quoted
       if ($char eq $quote_start) { push @tree, ['placeholder', ''] if ++$spec }
-      elsif ($char eq $quote_end) { $spec = 0 }
+      elsif ($char eq $quote_end) { $spec = $more = 0 }
   
       # Placeholder
-      elsif ($char eq $start) { push @tree, ['placeholder', ''] unless $spec++ }
+      elsif (!$more && $char eq $start) {
+        push @tree, ['placeholder', ''] unless $spec++;
+      }
   
       # Relaxed or wildcard (upgrade when quoted)
-      elsif ($char eq $relaxed || $char eq $wildcard) {
+      elsif (!$more && ($char eq $relaxed || $char eq $wildcard)) {
         push @tree, ['placeholder', ''] unless $spec++;
         $tree[-1][2] = $char eq $relaxed ? 'relaxed' : 'wildcard';
       }
@@ -33972,11 +35312,11 @@ $fatpacked{"Mojolicious/Routes/Pattern.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
       # Slash
       elsif ($char eq '/') {
         push @tree, ['slash'];
-        $spec = 0;
+        $spec = $more = 0;
       }
   
       # Placeholder
-      elsif ($spec) { $tree[-1][1] .= $char }
+      elsif ($spec && ++$more) { $tree[-1][1] .= $char }
   
       # Text (optimize slash+text and *+text+slash+text)
       elsif ($tree[-1][0] eq 'text') { $tree[-1][-1] .= $char }
@@ -34050,16 +35390,16 @@ $fatpacked{"Mojolicious/Routes/Pattern.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
   =head2 quote_end
   
     my $end  = $pattern->quote_end;
-    $pattern = $pattern->quote_end(']');
+    $pattern = $pattern->quote_end('}');
   
-  Character indicating the end of a quoted placeholder, defaults to C<)>.
+  Character indicating the end of a quoted placeholder, defaults to C<E<gt>>.
   
   =head2 quote_start
   
     my $start = $pattern->quote_start;
-    $pattern  = $pattern->quote_start('[');
+    $pattern  = $pattern->quote_start('{');
   
-  Character indicating the start of a quoted placeholder, defaults to C<(>.
+  Character indicating the start of a quoted placeholder, defaults to C<E<lt>>.
   
   =head2 regex
   
@@ -34083,10 +35423,24 @@ $fatpacked{"Mojolicious/Routes/Pattern.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
   Pattern in parsed form. Note that this structure should only be used very
   carefully since it is very dynamic.
   
+  =head2 type_start
+  
+    my $start = $pattern->type_start;
+    $pattern  = $pattern->type_start('|');
+  
+  Character indicating the start of a placeholder type, defaults to C<:>.
+  
+  =head2 types
+  
+    my $types = $pattern->types;
+    $pattern  = $pattern->types({int => qr/[0-9]+/});
+  
+  Placeholder types.
+  
   =head2 unparsed
   
     my $unparsed = $pattern->unparsed;
-    $pattern     = $pattern->unparsed('/(foo)/(bar)');
+    $pattern     = $pattern->unparsed('/:foo/:bar');
   
   Raw unparsed pattern.
   
@@ -34146,7 +35500,7 @@ $fatpacked{"Mojolicious/Routes/Pattern.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_ROUTES_PATTERN
@@ -34156,31 +35510,31 @@ $fatpacked{"Mojolicious/Routes/Route.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
   use Mojo::Base -base;
   
   use Carp ();
+  use Mojo::DynamicMethods -dispatch;
   use Mojo::Util;
   use Mojolicious::Routes::Pattern;
-  use Scalar::Util ();
   
-  has [qw(inline parent partial)];
+  has [qw(inline partial)];
   has 'children' => sub { [] };
+  has parent     => undef, weak => 1;
   has pattern    => sub { Mojolicious::Routes::Pattern->new };
   
-  sub AUTOLOAD {
-    my $self = shift;
+  sub BUILD_DYNAMIC {
+    my ($class, $method, $dyn_methods) = @_;
   
-    my ($package, $method) = our $AUTOLOAD =~ /^(.+)::(.+)$/;
-    Carp::croak "Undefined subroutine &${package}::$method called"
-      unless Scalar::Util::blessed $self && $self->isa(__PACKAGE__);
-  
-    # Call shortcut with current route
-    Carp::croak qq{Can't locate object method "$method" via package "$package"}
-      unless my $shortcut = $self->root->shortcuts->{$method};
-    return $self->$shortcut(@_);
+    return sub {
+      my $self    = shift;
+      my $dynamic = $dyn_methods->{$self->root}{$method};
+      return $self->$dynamic(@_) if $dynamic;
+      my $package = ref($self);
+      Carp::croak qq{Can't locate object method "$method" via package "$package"};
+    };
   }
   
   sub add_child {
     my ($self, $route) = @_;
-    Scalar::Util::weaken $route->remove->parent($self)->{parent};
-    push @{$self->children}, $route;
+    push @{$self->children}, $route->remove->parent($self);
+    $route->pattern->types($self->root->types);
     return $self;
   }
   
@@ -34287,9 +35641,7 @@ $fatpacked{"Mojolicious/Routes/Route.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
     if ($shortcut) {
   
       # Application
-      if (ref $shortcut || $shortcut =~ /^[\w:]+$/) {
-        $defaults{app} = $shortcut;
-      }
+      if (ref $shortcut || $shortcut =~ /^[\w:]+$/) { $defaults{app} = $shortcut }
   
       # Controller and action
       elsif ($shortcut =~ /^([\w\-:]+)?\#(\w+)?$/) {
@@ -34417,7 +35769,8 @@ $fatpacked{"Mojolicious/Routes/Route.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
     my $parent = $r->parent;
     $r         = $r->parent(Mojolicious::Routes::Route->new);
   
-  The parent of this route, usually a L<Mojolicious::Routes::Route> object.
+  The parent of this route, usually a L<Mojolicious::Routes::Route> object. Note
+  that this attribute is weakened.
   
   =head2 partial
   
@@ -34768,6 +36121,9 @@ $fatpacked{"Mojolicious/Routes/Route.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
   L<Mojolicious::Guides::Tutorial> and L<Mojolicious::Guides::Routing> for more
   information.
   
+    # Longer version
+    $r->any('/:foo' => sub {...})->inline(1);
+  
     # Intermediate destination and prefix shared between two routes
     my $auth = $r->under('/user')->to('user#auth');
     $auth->get('/show')->to('#show');
@@ -34804,7 +36160,7 @@ $fatpacked{"Mojolicious/Routes/Route.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
     # Route with destination
     $r->websocket('/echo')->to('example#echo');
   
-  =head1 AUTOLOAD
+  =head1 SHORTCUTS
   
   In addition to the L</"ATTRIBUTES"> and L</"METHODS"> above you can also call
   shortcuts provided by L</"root"> on L<Mojolicious::Routes::Route> objects.
@@ -34821,7 +36177,7 @@ $fatpacked{"Mojolicious/Routes/Route.pm"} = '#line '.(1+__LINE__).' "'.__FILE__.
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_ROUTES_ROUTE
@@ -34838,6 +36194,7 @@ $fatpacked{"Mojolicious/Sessions.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   has cookie_path        => '/';
   has default_expiration => 3600;
   has deserialize        => sub { \&Mojo::JSON::j };
+  has samesite           => 'Lax';
   has serialize          => sub { \&Mojo::JSON::encode_json };
   
   sub load {
@@ -34873,7 +36230,7 @@ $fatpacked{"Mojolicious/Sessions.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
     # Generate "expires" value from "expiration" if necessary
     my $expiration = $session->{expiration} // $self->default_expiration;
-    my $default = delete $session->{expires};
+    my $default    = delete $session->{expires};
     $session->{expires} = $default || time + $expiration
       if $expiration || $default;
   
@@ -34884,6 +36241,7 @@ $fatpacked{"Mojolicious/Sessions.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
       expires  => $session->{expires},
       httponly => 1,
       path     => $self->cookie_path,
+      samesite => $self->samesite,
       secure   => $self->secure
     };
     $c->signed_cookie($self->cookie_name, $value, $options);
@@ -34969,6 +36327,19 @@ $fatpacked{"Mojolicious/Sessions.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
       return {};
     });
   
+  =head2 samesite
+  
+    my $samesite = $sessions->samesite;
+    $sessions    = $sessions->samesite('Strict');
+  
+  Set the SameSite value on all session cookies, defaults to C<Lax>. Note that
+  this attribute is B<EXPERIMENTAL> because even though most commonly used
+  browsers support the feature, there is no specification yet besides
+  L<this draft|https://tools.ietf.org/html/draft-west-first-party-cookies-07>.
+  
+    # Disable SameSite feature
+    $sessions->samesite(undef);
+  
   =head2 secure
   
     my $bool  = $sessions->secure;
@@ -35008,7 +36379,7 @@ $fatpacked{"Mojolicious/Sessions.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_SESSIONS
@@ -35021,14 +36392,12 @@ $fatpacked{"Mojolicious/Static.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   use Mojo::Asset::Memory;
   use Mojo::Date;
   use Mojo::File 'path';
-  use Mojo::Home;
-  use Mojo::Loader 'data_section';
-  use Mojo::Util 'md5_sum';
+  use Mojo::Loader qw(data_section file_is_binary);
+  use Mojo::Util qw(encode md5_sum trim);
   
   # Bundled files
-  my $PUBLIC = Mojo::Home->new(Mojo::Home->new->mojo_lib_dir)
-    ->child('Mojolicious', 'resources', 'public');
-  my %EXTRA = $PUBLIC->list_tree->map(
+  my $PUBLIC = path(__FILE__)->sibling('resources', 'public');
+  my %EXTRA  = $PUBLIC->list_tree->map(
     sub { join('/', @{$_->to_rel($PUBLIC)}), $_->realpath->to_string })->each;
   
   has classes => sub { ['main'] };
@@ -35050,7 +36419,8 @@ $fatpacked{"Mojolicious/Static.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     return undef unless my @parts = @{$path->canonicalize->parts};
   
     # Serve static file and prevent path traversal
-    return undef if $parts[0] eq '..' || !$self->serve($c, join('/', @parts));
+    my $canon_path = join '/', @parts;
+    return undef if $canon_path =~ /^\.\.\/|\\/ || !$self->serve($c, $canon_path);
     $stash->{'mojo.static'} = 1;
     return !!$c->rendered;
   }
@@ -35087,7 +36457,8 @@ $fatpacked{"Mojolicious/Static.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     return undef unless (my $since = $req_headers->if_modified_since) || $match;
   
     # If-None-Match
-    return undef if $match && ($etag // $res_headers->etag // '') ne $match;
+    $etag //= $res_headers->etag // '';
+    return undef if $match && !grep { trim($_) eq $etag } split ',', $match;
   
     # If-Modified-Since
     return !!$match unless ($last //= $res_headers->last_modified) && $since;
@@ -35096,25 +36467,21 @@ $fatpacked{"Mojolicious/Static.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   
   sub serve {
     my ($self, $c, $rel) = @_;
-  
     return undef unless my $asset = $self->file($rel);
-    my $headers = $c->res->headers;
-    return !!$self->serve_asset($c, $asset) if $headers->content_type;
-  
-    # Content-Type
-    my $types = $c->app->types;
-    my $type = $rel =~ /\.(\w+)$/ ? $types->type($1) : undef;
-    $headers->content_type($type || $types->type('txt'));
+    $c->app->types->content_type($c, {file => $rel});
     return !!$self->serve_asset($c, $asset);
   }
   
   sub serve_asset {
     my ($self, $c, $asset) = @_;
   
+    # Content-Type
+    $c->app->types->content_type($c, {file => $asset->path}) if $asset->is_file;
+  
     # Last-Modified and ETag
     my $res = $c->res;
     $res->code(200)->headers->accept_ranges('bytes');
-    my $mtime = $asset->mtime;
+    my $mtime   = $asset->mtime;
     my $options = {etag => md5_sum($mtime), last_modified => $mtime};
     return $res->code(304) if $self->is_fresh($c, $options);
   
@@ -35135,7 +36502,7 @@ $fatpacked{"Mojolicious/Static.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   }
   
   sub warmup {
-    my $self = shift;
+    my $self  = shift;
     my $index = $self->{index} = {};
     for my $class (reverse @{$self->classes}) {
       $index->{$_} = $class for keys %{data_section $class};
@@ -35153,9 +36520,10 @@ $fatpacked{"Mojolicious/Static.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
     $self->warmup unless $self->{index};
   
     # Find file
-    return undef
-      unless defined(my $data = data_section($self->{index}{$rel}, $rel));
-    return Mojo::Asset::Memory->new->add_chunk($data);
+    my @args = ($self->{index}{$rel}, $rel);
+    return undef unless defined(my $data = data_section(@args));
+    return Mojo::Asset::Memory->new->add_chunk(
+      file_is_binary(@args) ? $data : encode 'UTF-8', $data);
   }
   
   sub _get_file {
@@ -35308,7 +36676,7 @@ $fatpacked{"Mojolicious/Static.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n"
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_STATIC
@@ -35342,14 +36710,25 @@ $fatpacked{"Mojolicious/Types.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
       svg      => ['image/svg+xml'],
       txt      => ['text/plain;charset=UTF-8'],
       webm     => ['video/webm'],
-      woff     => ['application/font-woff'],
+      woff     => ['font/woff'],
+      woff2    => ['font/woff2'],
       xml      => ['application/xml', 'text/xml'],
       zip      => ['application/zip']
     };
   };
   
+  sub content_type {
+    my ($self, $c, $o) = (shift, shift, shift // {});
+  
+    my $headers = $c->res->headers;
+    return undef if $headers->content_type;
+  
+    my $type = $o->{file} ? $self->file_type($o->{file}) : $self->type($o->{ext});
+    $headers->content_type($type // $self->type('txt'));
+  }
+  
   sub detect {
-    my ($self, $accept, $prioritize) = @_;
+    my ($self, $accept) = @_;
   
     # Extract and prioritize MIME types
     my %types;
@@ -35357,7 +36736,6 @@ $fatpacked{"Mojolicious/Types.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
       and $types{lc $1} = $2 // 1
       for split ',', $accept // '';
     my @detected = sort { $types{$b} <=> $types{$a} } sort keys %types;
-    return [] if !$prioritize && @detected > 1;
   
     # Detect extensions from MIME types
     my %reverse;
@@ -35366,8 +36744,11 @@ $fatpacked{"Mojolicious/Types.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
       my @types = @{$mapping->{$ext}};
       push @{$reverse{$_}}, $ext for map { s/\;.*$//; lc $_ } @types;
     }
+  
     return [map { @{$reverse{$_} // []} } @detected];
   }
+  
+  sub file_type { $_[1] =~ /\.(\w+)$/ ? $_[0]->type($1) : undef }
   
   sub type {
     my ($self, $ext, $type) = @_;
@@ -35419,7 +36800,8 @@ $fatpacked{"Mojolicious/Types.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
     svg      -> image/svg+xml
     txt      -> text/plain;charset=UTF-8
     webm     -> video/webm
-    woff     -> application/font-woff
+    woff     -> font/woff
+    woff2    -> font/woff2
     xml      -> application/xml,text/xml
     zip      -> application/zip
   
@@ -35441,16 +36823,48 @@ $fatpacked{"Mojolicious/Types.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
   L<Mojolicious::Types> inherits all methods from L<Mojo::Base> and implements
   the following new ones.
   
+  =head2 content_type
+  
+    $types->content_type(Mojolicious::Controller->new, {ext => 'json'});
+  
+  Detect MIME type for L<Mojolicious::Controller> object unless a C<Content-Type>
+  response header has already been set, defaults to using the MIME type for the
+  C<txt> extension if no better alternative could be found. Note that this method
+  is B<EXPERIMENTAL> and might change without warning!
+  
+  These options are currently available:
+  
+  =over 2
+  
+  =item ext
+  
+    ext => 'json'
+  
+  File extension to get MIME type for.
+  
+  =item file
+  
+    file => 'foo/bar.png'
+  
+  File path to get MIME type for.
+  
+  =back
+  
   =head2 detect
   
-    my $exts = $types->detect('application/json;q=9');
-    my $exts = $types->detect('text/html, application/json;q=9', 1);
+    my $exts = $types->detect('text/html, application/json;q=9');
   
-  Detect file extensions from C<Accept> header value, prioritization of
-  unspecific values that contain more than one MIME type is disabled by default.
+  Detect file extensions from C<Accept> header value.
   
     # List detected extensions prioritized
     say for @{$types->detect('application/json, text/xml;q=0.1', 1)};
+  
+  =head2 file_type
+  
+    my $type = $types->file_type('foo/bar.png');
+  
+  Get MIME type for file path. Note that this method is B<EXPERIMENTAL> and might
+  change without warning!
   
   =head2 type
   
@@ -35463,7 +36877,7 @@ $fatpacked{"Mojolicious/Types.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_TYPES
@@ -35472,48 +36886,60 @@ $fatpacked{"Mojolicious/Validator.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
   package Mojolicious::Validator;
   use Mojo::Base -base;
   
+  use Mojo::DynamicMethods;
   use Mojo::Util 'trim';
   use Mojolicious::Validator::Validation;
   
-  has checks => sub {
-    {
-      equal_to => \&_equal_to,
-      in       => \&_in,
-      like     => sub { $_[2] !~ $_[3] },
-      num      => \&_num,
-      size     => \&_size,
-      upload   => sub { !ref $_[2] || !$_[2]->isa('Mojo::Upload') }
-    };
-  };
+  has checks  => sub { {} };
   has filters => sub { {trim => \&_trim} };
   
-  sub add_check  { $_[0]->checks->{$_[1]}  = $_[2] and return $_[0] }
+  sub add_check {
+    my ($self, $name, $cb) = @_;
+    $self->checks->{$name} = $cb;
+    Mojo::DynamicMethods::register 'Mojolicious::Validator::Validation', $self,
+      $name, $cb;
+    return $self;
+  }
+  
   sub add_filter { $_[0]->filters->{$_[1]} = $_[2] and return $_[0] }
+  
+  sub new {
+    my $self = shift->SUPER::new(@_);
+  
+    $self->add_check(equal_to => \&_equal_to);
+    $self->add_check(in       => \&_in);
+    $self->add_check(like     => sub { $_[2] !~ $_[3] });
+    $self->add_check(num      => \&_num);
+    $self->add_check(size     => \&_size);
+    $self->add_check(upload => sub { !ref $_[2] || !$_[2]->isa('Mojo::Upload') });
+  
+    return $self;
+  }
   
   sub validation {
     Mojolicious::Validator::Validation->new(validator => shift);
   }
   
   sub _equal_to {
-    my ($validation, $name, $value, $to) = @_;
-    return 1 unless defined(my $other = $validation->input->{$to});
+    my ($v, $name, $value, $to) = @_;
+    return 1 unless defined(my $other = $v->input->{$to});
     return $value ne $other;
   }
   
   sub _in {
-    my ($validation, $name, $value) = (shift, shift, shift);
+    my ($v, $name, $value) = (shift, shift, shift);
     $value eq $_ && return undef for @_;
     return 1;
   }
   
   sub _num {
-    my ($validation, $name, $value, $min, $max) = @_;
-    return 1 if $value !~ /^[0-9]+$/;
-    return defined $min && $max ? $min > $value || $max < $value : undef;
+    my ($v, $name, $value, $min, $max) = @_;
+    return 1 if $value !~ /^-?[0-9]+$/;
+    return defined $min && $min > $value || defined $max && $max < $value;
   }
   
   sub _size {
-    my ($validation, $name, $value, $min, $max) = @_;
+    my ($v, $name, $value, $min, $max) = @_;
     my $len = ref $value ? $value->size : length $value;
     return $len < $min || $len > $max;
   }
@@ -35532,11 +36958,11 @@ $fatpacked{"Mojolicious/Validator.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
   
     use Mojolicious::Validator;
   
-    my $validator  = Mojolicious::Validator->new;
-    my $validation = $validator->validation;
-    $validation->input({foo => 'bar'});
-    $validation->required('foo')->like(qr/ar$/);
-    say $validation->param('foo');
+    my $validator = Mojolicious::Validator->new;
+    my $v = $validator->validation;
+    $v->input({foo => 'bar'});
+    $v->required('foo')->like(qr/ar$/);
+    say $v->param('foo');
   
   =head1 DESCRIPTION
   
@@ -35548,40 +36974,43 @@ $fatpacked{"Mojolicious/Validator.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
   
   =head2 equal_to
   
-    $validation = $validation->equal_to('foo');
+    $v = $v->equal_to('foo');
   
   String value needs to be equal to the value of another field.
   
   =head2 in
   
-    $validation = $validation->in('foo', 'bar', 'baz');
+    $v = $v->in('foo', 'bar', 'baz');
   
   String value needs to match one of the values in the list.
   
   =head2 like
   
-    $validation = $validation->like(qr/^[A-Z]/);
+    $v = $v->like(qr/^[A-Z]/);
   
   String value needs to match the regular expression.
   
   =head2 num
   
-    $validation = $validation->num;
-    $validation = $validation->num(2, 5);
+    $v = $v->num;
+    $v = $v->num(2, 5);
+    $v = $v->num(-3, 7);
+    $v = $v->num(2, undef);
+    $v = $v->num(undef, 5);
   
-  String value needs to be a non-fractional number and if provided in the given
-  range.
+  String value needs to be a non-fractional number (positive or negative) and if
+  provided in the given range.
   
   =head2 size
   
-    $validation = $validation->size(2, 5);
+    $v = $v->size(2, 5);
   
   String value length or size of L<Mojo::Upload> object in bytes needs to be
   between these two values.
   
   =head2 upload
   
-    $validation = $validation->upload;
+    $v = $v->upload;
   
   Value needs to be a L<Mojo::Upload> object, representing a file upload.
   
@@ -35591,7 +37020,7 @@ $fatpacked{"Mojolicious/Validator.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
   
   =head2 trim
   
-    $validation = $validation->optional('foo', 'trim');
+    $v = $v->optional('foo', 'trim');
   
   Trim whitespace characters from both ends of string value with
   L<Mojo::Util/"trim">.
@@ -35620,7 +37049,7 @@ $fatpacked{"Mojolicious/Validator.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
   Register a validation check.
   
     $validator->add_check(foo => sub {
-      my ($validation, $name, $value, @args) = @_;
+      my ($v, $name, $value, @args) = @_;
       ...
       return undef;
     });
@@ -35632,25 +37061,31 @@ $fatpacked{"Mojolicious/Validator.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"
   Register a new filter.
   
     $validator->add_filter(foo => sub {
-      my ($validation, $name, $value) = @_;
+      my ($v, $name, $value) = @_;
       ...
       return $value;
     });
   
+  =head2 new
+  
+    my $validator = Mojolicious::Validator->new;
+  
+  Construct a new L<Mojolicious::Validator> object.
+  
   =head2 validation
   
-    my $validation = $validator->validation;
+    my $v = $validator->validation;
   
   Build L<Mojolicious::Validator::Validation> object to perform validations.
   
-    my $validation = $validator->validation;
-    $validation->input({foo => 'bar'});
-    $validation->required('foo')->size(1, 5);
-    say $validation->param('foo');
+    my $v = $validator->validation;
+    $v->input({foo => 'bar'});
+    $v->required('foo')->size(1, 5);
+    say $v->param('foo');
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_VALIDATOR
@@ -35659,21 +37094,23 @@ $fatpacked{"Mojolicious/Validator/Validation.pm"} = '#line '.(1+__LINE__).' "'._
   package Mojolicious::Validator::Validation;
   use Mojo::Base -base;
   
-  use Carp         ();
+  use Carp ();
+  use Mojo::DynamicMethods -dispatch;
   use Scalar::Util ();
   
   has [qw(csrf_token topic validator)];
   has [qw(input output)] => sub { {} };
   
-  sub AUTOLOAD {
-    my $self = shift;
+  sub BUILD_DYNAMIC {
+    my ($class, $method, $dyn_methods) = @_;
   
-    my ($package, $method) = our $AUTOLOAD =~ /^(.+)::(.+)$/;
-    Carp::croak "Undefined subroutine &${package}::$method called"
-      unless Scalar::Util::blessed $self && $self->isa(__PACKAGE__);
-  
-    return $self->check($method => @_) if $self->validator->checks->{$method};
-    Carp::croak qq{Can't locate object method "$method" via package "$package"};
+    return sub {
+      my $self    = shift;
+      my $dynamic = $dyn_methods->{$self->validator}{$method};
+      return $self->check($method => @_) if $dynamic;
+      my $package = ref $self;
+      Carp::croak qq{Can't locate object method "$method" via package "$package"};
+    };
   }
   
   sub check {
@@ -35760,11 +37197,10 @@ $fatpacked{"Mojolicious/Validator/Validation.pm"} = '#line '.(1+__LINE__).' "'._
     use Mojolicious::Validator::Validation;
   
     my $validator = Mojolicious::Validator->new;
-    my $validation
-      = Mojolicious::Validator::Validation->new(validator => $validator);
-    $validation->input({foo => 'bar'});
-    $validation->required('foo')->in('bar', 'baz');
-    say $validation->param('foo');
+    my $v = Mojolicious::Validator::Validation->new(validator => $validator);
+    $v->input({foo => 'bar'});
+    $v->required('foo')->in('bar', 'baz');
+    say $v->param('foo');
   
   =head1 DESCRIPTION
   
@@ -35777,36 +37213,36 @@ $fatpacked{"Mojolicious/Validator/Validation.pm"} = '#line '.(1+__LINE__).' "'._
   
   =head2 csrf_token
   
-    my $token   = $validation->csrf_token;
-    $validation = $validation->csrf_token('fa6a08...');
+    my $token = $v->csrf_token;
+    $v        = $v->csrf_token('fa6a08...');
   
   CSRF token.
   
   =head2 input
   
-    my $input   = $validation->input;
-    $validation = $validation->input({foo => 'bar', baz => [123, 'yada']});
+    my $input = $v->input;
+    $v        = $v->input({foo => 'bar', baz => [123, 'yada']});
   
   Data to be validated.
   
   =head2 output
   
-    my $output  = $validation->output;
-    $validation = $validation->output({foo => 'bar', baz => [123, 'yada']});
+    my $output = $v->output;
+    $v         = $v->output({foo => 'bar', baz => [123, 'yada']});
   
   Validated data.
   
   =head2 topic
   
-    my $topic   = $validation->topic;
-    $validation = $validation->topic('foo');
+    my $topic = $v->topic;
+    $v        = $v->topic('foo');
   
   Name of field currently being validated.
   
   =head2 validator
   
-    my $validator = $validation->validator;
-    $validation   = $validation->validator(Mojolicious::Validator->new);
+    my $v = $v->validator;
+    $v    = $v->validator(Mojolicious::Validator->new);
   
   L<Mojolicious::Validator> object this validation belongs to.
   
@@ -35817,7 +37253,7 @@ $fatpacked{"Mojolicious/Validator/Validation.pm"} = '#line '.(1+__LINE__).' "'._
   
   =head2 check
   
-    $validation = $validation->check('size', 2, 7);
+    $v = $v->check('size', 2, 7);
   
   Perform validation check on all values of the current L</"topic">, no more
   checks will be performed on them after the first one failed. All checks from
@@ -35825,915 +37261,130 @@ $fatpacked{"Mojolicious/Validator/Validation.pm"} = '#line '.(1+__LINE__).' "'._
   
   =head2 csrf_protect
   
-    $validation = $validation->csrf_protect;
+    $v = $v->csrf_protect;
   
   Validate C<csrf_token> and protect from cross-site request forgery.
   
   =head2 error
   
-    my $err     = $validation->error('foo');
-    $validation = $validation->error(foo => ['custom_check']);
-    $validation = $validation->error(foo => [$check, $result, @args]);
+    my $err = $v->error('foo');
+    $v      = $v->error(foo => ['custom_check']);
+    $v      = $v->error(foo => [$check, $result, @args]);
   
   Get or set details for failed validation check, at any given time there can
   only be one per field.
   
     # Details about failed validation
-    my ($check, $result, @args) = @{$validation->error('foo')};
+    my ($check, $result, @args) = @{$v->error('foo')};
+  
+    # Force validation to fail for a field without performing a check
+    $v->error(foo => ['some_made_up_check_name']);
   
   =head2 every_param
   
-    my $values = $validation->every_param;
-    my $values = $validation->every_param('foo');
+    my $values = $v->every_param;
+    my $values = $v->every_param('foo');
   
   Similar to L</"param">, but returns all values sharing the same name as an
   array reference.
   
     # Get first value
-    my $first = $validation->every_param('foo')->[0];
+    my $first = $v->every_param('foo')->[0];
   
   =head2 failed
   
-    my $names = $validation->failed;
+    my $names = $v->failed;
   
   Return an array reference with all names for values that failed validation.
   
     # Names of all values that failed
-    say for @{$validation->failed};
+    say for @{$v->failed};
   
   =head2 has_data
   
-    my $bool = $validation->has_data;
+    my $bool = $v->has_data;
   
   Check if L</"input"> is available for validation.
   
   =head2 has_error
   
-    my $bool = $validation->has_error;
-    my $bool = $validation->has_error('foo');
+    my $bool = $v->has_error;
+    my $bool = $v->has_error('foo');
   
   Check if validation resulted in errors, defaults to checking all fields.
   
   =head2 is_valid
   
-    my $bool = $validation->is_valid;
-    my $bool = $validation->is_valid('foo');
+    my $bool = $v->is_valid;
+    my $bool = $v->is_valid('foo');
   
   Check if validation was successful and field has a value, defaults to checking
   the current L</"topic">.
   
   =head2 optional
   
-    $validation = $validation->optional('foo');
-    $validation = $validation->optional('foo', 'filter1', 'filter2');
+    $v = $v->optional('foo');
+    $v = $v->optional('foo', 'filter1', 'filter2');
   
   Change validation L</"topic"> and apply filters. All filters from
   L<Mojolicious::Validator/"FILTERS"> are supported.
   
     # Trim value and check size
-    $validation->optional('user', 'trim')->size(1, 15);
+    $v->optional('user', 'trim')->size(1, 15);
   
   =head2 param
   
-    my $value = $validation->param;
-    my $value = $validation->param('foo');
+    my $value = $v->param;
+    my $value = $v->param('foo');
   
   Access validated values, defaults to the current L</"topic">. If there are
   multiple values sharing the same name, and you want to access more than just the
   last one, you can use L</"every_param">.
   
     # Get value right away
-    my $user = $validation->optional('user')->size(1, 15)->param;
+    my $user = $v->optional('user')->size(1, 15)->param;
   
   =head2 passed
   
-    my $names = $validation->passed;
+    my $names = $v->passed;
   
   Return an array reference with all names for values that passed validation.
   
     # Names of all values that passed
-    say for @{$validation->passed};
+    say for @{$v->passed};
   
   =head2 required
   
-    $validation = $validation->required('foo');
-    $validation = $validation->required('foo', 'filter1', 'filter2');
+    $v = $v->required('foo');
+    $v = $v->required('foo', 'filter1', 'filter2');
   
   Change validation L</"topic">, apply filters, and make sure a value is present
   and not an empty string. All filters from L<Mojolicious::Validator/"FILTERS">
   are supported.
   
     # Trim value and check size
-    $validation->required('user', 'trim')->size(1, 15);
+    $v->required('user', 'trim')->size(1, 15);
   
-  =head1 AUTOLOAD
+  =head1 CHECKS
   
   In addition to the L</"ATTRIBUTES"> and L</"METHODS"> above, you can also call
   validation checks provided by L</"validator"> on
   L<Mojolicious::Validator::Validation> objects, similar to L</"check">.
   
     # Call validation checks
-    $validation->required('foo')->size(2, 5)->like(qr/^[A-Z]/);
-    $validation->optional('bar')->equal_to('foo');
-    $validation->optional('baz')->in('test', '123');
+    $v->required('foo')->size(2, 5)->like(qr/^[A-Z]/);
+    $v->optional('bar')->equal_to('foo');
+    $v->optional('baz')->in('test', '123');
   
     # Longer version
-    $validation->required('foo')->check('size', 2, 5)->check('like', qr/^[A-Z]/);
+    $v->required('foo')->check('size', 2, 5)->check('like', qr/^[A-Z]/);
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 MOJOLICIOUS_VALIDATOR_VALIDATION
-
-$fatpacked{"Role/Tiny.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'ROLE_TINY';
-  package Role::Tiny;
-  
-  sub _getglob { \*{$_[0]} }
-  sub _getstash { \%{"$_[0]::"} }
-  
-  use strict;
-  use warnings;
-  
-  our $VERSION = '2.000006';
-  $VERSION =~ tr/_//d;
-  
-  our %INFO;
-  our %APPLIED_TO;
-  our %COMPOSED;
-  our %COMPOSITE_INFO;
-  our @ON_ROLE_CREATE;
-  
-  # Module state workaround totally stolen from Zefram's Module::Runtime.
-  
-  BEGIN {
-    *_WORK_AROUND_BROKEN_MODULE_STATE = "$]" < 5.009 ? sub(){1} : sub(){0};
-    *_WORK_AROUND_HINT_LEAKAGE
-      = "$]" < 5.011 && !("$]" >= 5.009004 && "$]" < 5.010001)
-        ? sub(){1} : sub(){0};
-    *_MRO_MODULE = "$]" < 5.010 ? sub(){"MRO/Compat.pm"} : sub(){"mro.pm"};
-  }
-  
-  sub croak {
-    require Carp;
-    no warnings 'redefine';
-    *croak = \&Carp::croak;
-    goto &Carp::croak;
-  }
-  
-  sub Role::Tiny::__GUARD__::DESTROY {
-    delete $INC{$_[0]->[0]} if @{$_[0]};
-  }
-  
-  sub _load_module {
-    my ($module) = @_;
-    (my $file = "$module.pm") =~ s{::}{/}g;
-    return 1
-      if $INC{$file};
-  
-    # can't just ->can('can') because a sub-package Foo::Bar::Baz
-    # creates a 'Baz::' key in Foo::Bar's symbol table
-    return 1
-      if grep !/::\z/, keys %{_getstash($module)};
-    my $guard = _WORK_AROUND_BROKEN_MODULE_STATE
-      && bless([ $file ], 'Role::Tiny::__GUARD__');
-    local %^H if _WORK_AROUND_HINT_LEAKAGE;
-    require $file;
-    pop @$guard if _WORK_AROUND_BROKEN_MODULE_STATE;
-    return 1;
-  }
-  
-  sub import {
-    my $target = caller;
-    my $me = shift;
-    strict->import;
-    warnings->import;
-    $me->_install_subs($target);
-    return if $me->is_role($target); # already exported into this package
-    $INFO{$target}{is_role} = 1;
-    # get symbol table reference
-    my $stash = _getstash($target);
-    # grab all *non-constant* (stash slot is not a scalarref) subs present
-    # in the symbol table and store their refaddrs (no need to forcibly
-    # inflate constant subs into real subs) with a map to the coderefs in
-    # case of copying or re-use
-    my @not_methods = map +(ref $_ eq 'CODE' ? $_ : ref $_ ? () : *$_{CODE}||()), values %$stash;
-    @{$INFO{$target}{not_methods}={}}{@not_methods} = @not_methods;
-    # a role does itself
-    $APPLIED_TO{$target} = { $target => undef };
-    foreach my $hook (@ON_ROLE_CREATE) {
-      $hook->($target);
-    }
-  }
-  
-  sub _install_subs {
-    my ($me, $target) = @_;
-    return if $me->is_role($target);
-    # install before/after/around subs
-    foreach my $type (qw(before after around)) {
-      *{_getglob "${target}::${type}"} = sub {
-        push @{$INFO{$target}{modifiers}||=[]}, [ $type => @_ ];
-        return;
-      };
-    }
-    *{_getglob "${target}::requires"} = sub {
-      push @{$INFO{$target}{requires}||=[]}, @_;
-      return;
-    };
-    *{_getglob "${target}::with"} = sub {
-      $me->apply_roles_to_package($target, @_);
-      return;
-    };
-  }
-  
-  sub role_application_steps {
-    qw(_install_methods _check_requires _install_modifiers _copy_applied_list);
-  }
-  
-  sub apply_single_role_to_package {
-    my ($me, $to, $role) = @_;
-  
-    _load_module($role);
-  
-    croak "This is apply_role_to_package" if ref($to);
-    croak "${role} is not a Role::Tiny" unless $me->is_role($role);
-  
-    foreach my $step ($me->role_application_steps) {
-      $me->$step($to, $role);
-    }
-  }
-  
-  sub _copy_applied_list {
-    my ($me, $to, $role) = @_;
-    # copy our role list into the target's
-    @{$APPLIED_TO{$to}||={}}{keys %{$APPLIED_TO{$role}}} = ();
-  }
-  
-  sub apply_roles_to_object {
-    my ($me, $object, @roles) = @_;
-    croak "No roles supplied!" unless @roles;
-    my $class = ref($object);
-    # on perl < 5.8.9, magic isn't copied to all ref copies. bless the parameter
-    # directly, so at least the variable passed to us will get any magic applied
-    bless($_[1], $me->create_class_with_roles($class, @roles));
-  }
-  
-  my $role_suffix = 'A000';
-  sub _composite_name {
-    my ($me, $superclass, @roles) = @_;
-  
-    my $new_name = join(
-      '__WITH__', $superclass, my $compose_name = join '__AND__', @roles
-    );
-  
-    if (length($new_name) > 252) {
-      $new_name = $COMPOSED{abbrev}{$new_name} ||= do {
-        my $abbrev = substr $new_name, 0, 250 - length $role_suffix;
-        $abbrev =~ s/(?<!:):$//;
-        $abbrev.'__'.$role_suffix++;
-      };
-    }
-    return wantarray ? ($new_name, $compose_name) : $new_name;
-  }
-  
-  sub create_class_with_roles {
-    my ($me, $superclass, @roles) = @_;
-  
-    croak "No roles supplied!" unless @roles;
-  
-    _load_module($superclass);
-    {
-      my %seen;
-      if (my @dupes = grep 1 == $seen{$_}++, @roles) {
-        croak "Duplicated roles: ".join(', ', @dupes);
-      }
-    }
-  
-    my ($new_name, $compose_name) = $me->_composite_name($superclass, @roles);
-  
-    return $new_name if $COMPOSED{class}{$new_name};
-  
-    foreach my $role (@roles) {
-      _load_module($role);
-      croak "${role} is not a Role::Tiny" unless $me->is_role($role);
-    }
-  
-    require(_MRO_MODULE);
-  
-    my $composite_info = $me->_composite_info_for(@roles);
-    my %conflicts = %{$composite_info->{conflicts}};
-    if (keys %conflicts) {
-      my $fail =
-        join "\n",
-          map {
-            "Method name conflict for '$_' between roles "
-            ."'".join("' and '", sort values %{$conflicts{$_}})."'"
-            .", cannot apply these simultaneously to an object."
-          } keys %conflicts;
-      croak $fail;
-    }
-  
-    my @composable = map $me->_composable_package_for($_), reverse @roles;
-  
-    # some methods may not exist in the role, but get generated by
-    # _composable_package_for (Moose accessors via Moo).  filter out anything
-    # provided by the composable packages, excluding the subs we generated to
-    # make modifiers work.
-    my @requires = grep {
-      my $method = $_;
-      !grep $_->can($method) && !$COMPOSED{role}{$_}{modifiers_only}{$method},
-        @composable
-    } @{$composite_info->{requires}};
-  
-    $me->_check_requires(
-      $superclass, $compose_name, \@requires
-    );
-  
-    *{_getglob("${new_name}::ISA")} = [ @composable, $superclass ];
-  
-    @{$APPLIED_TO{$new_name}||={}}{
-      map keys %{$APPLIED_TO{$_}}, @roles
-    } = ();
-  
-    $COMPOSED{class}{$new_name} = 1;
-    return $new_name;
-  }
-  
-  # preserved for compat, and apply_roles_to_package calls it to allow an
-  # updated Role::Tiny to use a non-updated Moo::Role
-  
-  sub apply_role_to_package { shift->apply_single_role_to_package(@_) }
-  
-  sub apply_roles_to_package {
-    my ($me, $to, @roles) = @_;
-  
-    return $me->apply_role_to_package($to, $roles[0]) if @roles == 1;
-  
-    my %conflicts = %{$me->_composite_info_for(@roles)->{conflicts}};
-    my @have = grep $to->can($_), keys %conflicts;
-    delete @conflicts{@have};
-  
-    if (keys %conflicts) {
-      my $fail =
-        join "\n",
-          map {
-            "Due to a method name conflict between roles "
-            ."'".join(' and ', sort values %{$conflicts{$_}})."'"
-            .", the method '$_' must be implemented by '${to}'"
-          } keys %conflicts;
-      croak $fail;
-    }
-  
-    # conflicting methods are supposed to be treated as required by the
-    # composed role. we don't have an actual composed role, but because
-    # we know the target class already provides them, we can instead
-    # pretend that the roles don't do for the duration of application.
-    my @role_methods = map $me->_concrete_methods_of($_), @roles;
-    # separate loops, since local ..., delete ... for ...; creates a scope
-    local @{$_}{@have} for @role_methods;
-    delete @{$_}{@have} for @role_methods;
-  
-    # the if guard here is essential since otherwise we accidentally create
-    # a $INFO for something that isn't a Role::Tiny (or Moo::Role) because
-    # autovivification hates us and wants us to die()
-    if ($INFO{$to}) {
-      delete $INFO{$to}{methods}; # reset since we're about to add methods
-    }
-  
-    # backcompat: allow subclasses to use apply_single_role_to_package
-    # to apply changes.  set a local var so ours does nothing.
-    our %BACKCOMPAT_HACK;
-    if($me ne __PACKAGE__
-        and exists $BACKCOMPAT_HACK{$me} ? $BACKCOMPAT_HACK{$me} :
-        $BACKCOMPAT_HACK{$me} =
-          $me->can('role_application_steps')
-            == \&role_application_steps
-          && $me->can('apply_single_role_to_package')
-            != \&apply_single_role_to_package
-    ) {
-      foreach my $role (@roles) {
-        $me->apply_single_role_to_package($to, $role);
-      }
-    }
-    else {
-      foreach my $step ($me->role_application_steps) {
-        foreach my $role (@roles) {
-          $me->$step($to, $role);
-        }
-      }
-    }
-    $APPLIED_TO{$to}{join('|',@roles)} = 1;
-  }
-  
-  sub _composite_info_for {
-    my ($me, @roles) = @_;
-    $COMPOSITE_INFO{join('|', sort @roles)} ||= do {
-      foreach my $role (@roles) {
-        _load_module($role);
-      }
-      my %methods;
-      foreach my $role (@roles) {
-        my $this_methods = $me->_concrete_methods_of($role);
-        $methods{$_}{$this_methods->{$_}} = $role for keys %$this_methods;
-      }
-      my %requires;
-      @requires{map @{$INFO{$_}{requires}||[]}, @roles} = ();
-      delete $requires{$_} for keys %methods;
-      delete $methods{$_} for grep keys(%{$methods{$_}}) == 1, keys %methods;
-      +{ conflicts => \%methods, requires => [keys %requires] }
-    };
-  }
-  
-  sub _composable_package_for {
-    my ($me, $role) = @_;
-    my $composed_name = 'Role::Tiny::_COMPOSABLE::'.$role;
-    return $composed_name if $COMPOSED{role}{$composed_name};
-    $me->_install_methods($composed_name, $role);
-    my $base_name = $composed_name.'::_BASE';
-    # force stash to exist so ->can doesn't complain
-    _getstash($base_name);
-    # Not using _getglob, since setting @ISA via the typeglob breaks
-    # inheritance on 5.10.0 if the stash has previously been accessed an
-    # then a method called on the class (in that order!), which
-    # ->_install_methods (with the help of ->_install_does) ends up doing.
-    { no strict 'refs'; @{"${composed_name}::ISA"} = ( $base_name ); }
-    my $modifiers = $INFO{$role}{modifiers}||[];
-    my @mod_base;
-    my @modifiers = grep !$composed_name->can($_),
-      do { my %h; @h{map @{$_}[1..$#$_-1], @$modifiers} = (); keys %h };
-    foreach my $modified (@modifiers) {
-      push @mod_base, "sub ${modified} { shift->next::method(\@_) }";
-    }
-    my $e;
-    {
-      local $@;
-      eval(my $code = join "\n", "package ${base_name};", @mod_base);
-      $e = "Evaling failed: $@\nTrying to eval:\n${code}" if $@;
-    }
-    die $e if $e;
-    $me->_install_modifiers($composed_name, $role);
-    $COMPOSED{role}{$composed_name} = {
-      modifiers_only => { map { $_ => 1 } @modifiers },
-    };
-    return $composed_name;
-  }
-  
-  sub _check_requires {
-    my ($me, $to, $name, $requires) = @_;
-    return unless my @requires = @{$requires||$INFO{$name}{requires}||[]};
-    if (my @requires_fail = grep !$to->can($_), @requires) {
-      # role -> role, add to requires, role -> class, error out
-      if (my $to_info = $INFO{$to}) {
-        push @{$to_info->{requires}||=[]}, @requires_fail;
-      } else {
-        croak "Can't apply ${name} to ${to} - missing ".join(', ', @requires_fail);
-      }
-    }
-  }
-  
-  sub _concrete_methods_of {
-    my ($me, $role) = @_;
-    my $info = $INFO{$role};
-    # grab role symbol table
-    my $stash = _getstash($role);
-    # reverse so our keys become the values (captured coderefs) in case
-    # they got copied or re-used since
-    my $not_methods = { reverse %{$info->{not_methods}||{}} };
-    $info->{methods} ||= +{
-      # grab all code entries that aren't in the not_methods list
-      map {;
-        no strict 'refs';
-        my $code = exists &{"${role}::$_"} ? \&{"${role}::$_"} : undef;
-        ( ! $code or exists $not_methods->{$code} ) ? () : ($_ => $code)
-      } grep +(!ref($stash->{$_}) || ref($stash->{$_}) eq 'CODE'), keys %$stash
-    };
-  }
-  
-  sub methods_provided_by {
-    my ($me, $role) = @_;
-    croak "${role} is not a Role::Tiny" unless $me->is_role($role);
-    (keys %{$me->_concrete_methods_of($role)}, @{$INFO{$role}->{requires}||[]});
-  }
-  
-  sub _install_methods {
-    my ($me, $to, $role) = @_;
-  
-    my $info = $INFO{$role};
-  
-    my $methods = $me->_concrete_methods_of($role);
-  
-    # grab target symbol table
-    my $stash = _getstash($to);
-  
-    # determine already extant methods of target
-    my %has_methods;
-    @has_methods{grep
-      +(ref($stash->{$_}) || *{$stash->{$_}}{CODE}),
-      keys %$stash
-    } = ();
-  
-    foreach my $i (grep !exists $has_methods{$_}, keys %$methods) {
-      no warnings 'once';
-      my $glob = _getglob "${to}::${i}";
-      *$glob = $methods->{$i};
-  
-      # overloads using method names have the method stored in the scalar slot
-      # and &overload::nil in the code slot.
-      next
-        unless $i =~ /^\(/
-          && ((defined &overload::nil && $methods->{$i} == \&overload::nil)
-              || (defined &overload::_nil && $methods->{$i} == \&overload::_nil));
-  
-      my $overload = ${ *{_getglob "${role}::${i}"}{SCALAR} };
-      next
-        unless defined $overload;
-  
-      *$glob = \$overload;
-    }
-  
-    $me->_install_does($to);
-  }
-  
-  sub _install_modifiers {
-    my ($me, $to, $name) = @_;
-    return unless my $modifiers = $INFO{$name}{modifiers};
-    my $info = $INFO{$to};
-    my $existing = ($info ? $info->{modifiers} : $COMPOSED{modifiers}{$to}) ||= [];
-    my @modifiers = grep {
-      my $modifier = $_;
-      !grep $_ == $modifier, @$existing;
-    } @{$modifiers||[]};
-    push @$existing, @modifiers;
-  
-    if (!$info) {
-      foreach my $modifier (@modifiers) {
-        $me->_install_single_modifier($to, @$modifier);
-      }
-    }
-  }
-  
-  my $vcheck_error;
-  
-  sub _install_single_modifier {
-    my ($me, @args) = @_;
-    defined($vcheck_error) or $vcheck_error = do {
-      local $@;
-      eval {
-        require Class::Method::Modifiers;
-        Class::Method::Modifiers->VERSION(1.05);
-        1;
-      } ? 0 : $@;
-    };
-    $vcheck_error and die $vcheck_error;
-    Class::Method::Modifiers::install_modifier(@args);
-  }
-  
-  my $FALLBACK = sub { 0 };
-  sub _install_does {
-    my ($me, $to) = @_;
-  
-    # only add does() method to classes
-    return if $me->is_role($to);
-  
-    my $does = $me->can('does_role');
-    # add does() only if they don't have one
-    *{_getglob "${to}::does"} = $does unless $to->can('does');
-  
-    return
-      if $to->can('DOES') and $to->can('DOES') != (UNIVERSAL->can('DOES') || 0);
-  
-    my $existing = $to->can('DOES') || $to->can('isa') || $FALLBACK;
-    my $new_sub = sub {
-      my ($proto, $role) = @_;
-      $proto->$does($role) or $proto->$existing($role);
-    };
-    no warnings 'redefine';
-    return *{_getglob "${to}::DOES"} = $new_sub;
-  }
-  
-  sub does_role {
-    my ($proto, $role) = @_;
-    require(_MRO_MODULE);
-    foreach my $class (@{mro::get_linear_isa(ref($proto)||$proto)}) {
-      return 1 if exists $APPLIED_TO{$class}{$role};
-    }
-    return 0;
-  }
-  
-  sub is_role {
-    my ($me, $role) = @_;
-    return !!($INFO{$role} && ($INFO{$role}{is_role} || $INFO{$role}{not_methods}));
-  }
-  
-  1;
-  __END__
-  
-  =encoding utf-8
-  
-  =head1 NAME
-  
-  Role::Tiny - Roles. Like a nouvelle cuisine portion size slice of Moose.
-  
-  =head1 SYNOPSIS
-  
-   package Some::Role;
-  
-   use Role::Tiny;
-  
-   sub foo { ... }
-  
-   sub bar { ... }
-  
-   around baz => sub { ... };
-  
-   1;
-  
-  elsewhere
-  
-   package Some::Class;
-  
-   use Role::Tiny::With;
-  
-   # bar gets imported, but not foo
-   with 'Some::Role';
-  
-   sub foo { ... }
-  
-   # baz is wrapped in the around modifier by Class::Method::Modifiers
-   sub baz { ... }
-  
-   1;
-  
-  If you wanted attributes as well, look at L<Moo::Role>.
-  
-  =head1 DESCRIPTION
-  
-  C<Role::Tiny> is a minimalist role composition tool.
-  
-  =head1 ROLE COMPOSITION
-  
-  Role composition can be thought of as much more clever and meaningful multiple
-  inheritance.  The basics of this implementation of roles is:
-  
-  =over 2
-  
-  =item *
-  
-  If a method is already defined on a class, that method will not be composed in
-  from the role. A method inherited by a class gets overridden by the role's
-  method of the same name, though.
-  
-  =item *
-  
-  If a method that the role L</requires> to be implemented is not implemented,
-  role application will fail loudly.
-  
-  =back
-  
-  Unlike L<Class::C3>, where the B<last> class inherited from "wins," role
-  composition is the other way around, where the class wins. If multiple roles
-  are applied in a single call (single with statement), then if any of their
-  provided methods clash, an exception is raised unless the class provides
-  a method since this conflict indicates a potential problem.
-  
-  =head1 IMPORTED SUBROUTINES
-  
-  =head2 requires
-  
-   requires qw(foo bar);
-  
-  Declares a list of methods that must be defined to compose role.
-  
-  =head2 with
-  
-   with 'Some::Role1';
-  
-   with 'Some::Role1', 'Some::Role2';
-  
-  Composes another role into the current role (or class via L<Role::Tiny::With>).
-  
-  If you have conflicts and want to resolve them in favour of Some::Role1 you
-  can instead write:
-  
-   with 'Some::Role1';
-   with 'Some::Role2';
-  
-  If you have conflicts and want to resolve different conflicts in favour of
-  different roles, please refactor your codebase.
-  
-  =head2 before
-  
-   before foo => sub { ... };
-  
-  See L<< Class::Method::Modifiers/before method(s) => sub { ... } >> for full
-  documentation.
-  
-  Note that since you are not required to use method modifiers,
-  L<Class::Method::Modifiers> is lazily loaded and we do not declare it as
-  a dependency. If your L<Role::Tiny> role uses modifiers you must depend on
-  both L<Class::Method::Modifiers> and L<Role::Tiny>.
-  
-  =head2 around
-  
-   around foo => sub { ... };
-  
-  See L<< Class::Method::Modifiers/around method(s) => sub { ... } >> for full
-  documentation.
-  
-  Note that since you are not required to use method modifiers,
-  L<Class::Method::Modifiers> is lazily loaded and we do not declare it as
-  a dependency. If your L<Role::Tiny> role uses modifiers you must depend on
-  both L<Class::Method::Modifiers> and L<Role::Tiny>.
-  
-  =head2 after
-  
-   after foo => sub { ... };
-  
-  See L<< Class::Method::Modifiers/after method(s) => sub { ... } >> for full
-  documentation.
-  
-  Note that since you are not required to use method modifiers,
-  L<Class::Method::Modifiers> is lazily loaded and we do not declare it as
-  a dependency. If your L<Role::Tiny> role uses modifiers you must depend on
-  both L<Class::Method::Modifiers> and L<Role::Tiny>.
-  
-  =head2 Strict and Warnings
-  
-  In addition to importing subroutines, using C<Role::Tiny> applies L<strict> and
-  L<warnings> to the caller.
-  
-  =head1 SUBROUTINES
-  
-  =head2 does_role
-  
-   if (Role::Tiny::does_role($foo, 'Some::Role')) {
-     ...
-   }
-  
-  Returns true if class has been composed with role.
-  
-  This subroutine is also installed as ->does on any class a Role::Tiny is
-  composed into unless that class already has an ->does method, so
-  
-    if ($foo->does('Some::Role')) {
-      ...
-    }
-  
-  will work for classes but to test a role, one must use ::does_role directly.
-  
-  Additionally, Role::Tiny will override the standard Perl C<DOES> method
-  for your class. However, if C<any> class in your class' inheritance
-  hierarchy provides C<DOES>, then Role::Tiny will not override it.
-  
-  =head1 METHODS
-  
-  =head2 apply_roles_to_package
-  
-   Role::Tiny->apply_roles_to_package(
-     'Some::Package', 'Some::Role', 'Some::Other::Role'
-   );
-  
-  Composes role with package.  See also L<Role::Tiny::With>.
-  
-  =head2 apply_roles_to_object
-  
-   Role::Tiny->apply_roles_to_object($foo, qw(Some::Role1 Some::Role2));
-  
-  Composes roles in order into object directly. Object is reblessed into the
-  resulting class. Note that the object's methods get overridden by the role's
-  ones with the same names.
-  
-  =head2 create_class_with_roles
-  
-   Role::Tiny->create_class_with_roles('Some::Base', qw(Some::Role1 Some::Role2));
-  
-  Creates a new class based on base, with the roles composed into it in order.
-  New class is returned.
-  
-  =head2 is_role
-  
-   Role::Tiny->is_role('Some::Role1')
-  
-  Returns true if the given package is a role.
-  
-  =head1 CAVEATS
-  
-  =over 4
-  
-  =item * On perl 5.8.8 and earlier, applying a role to an object won't apply any
-  overloads from the role to other copies of the object.
-  
-  =item * On perl 5.16 and earlier, applying a role to a class won't apply any
-  overloads from the role to any existing instances of the class.
-  
-  =back
-  
-  =head1 SEE ALSO
-  
-  L<Role::Tiny> is the attribute-less subset of L<Moo::Role>; L<Moo::Role> is
-  a meta-protocol-less subset of the king of role systems, L<Moose::Role>.
-  
-  Ovid's L<Role::Basic> provides roles with a similar scope, but without method
-  modifiers, and having some extra usage restrictions.
-  
-  =head1 AUTHOR
-  
-  mst - Matt S. Trout (cpan:MSTROUT) <mst@shadowcat.co.uk>
-  
-  =head1 CONTRIBUTORS
-  
-  dg - David Leadbeater (cpan:DGL) <dgl@dgl.cx>
-  
-  frew - Arthur Axel "fREW" Schmidt (cpan:FREW) <frioux@gmail.com>
-  
-  hobbs - Andrew Rodland (cpan:ARODLAND) <arodland@cpan.org>
-  
-  jnap - John Napiorkowski (cpan:JJNAPIORK) <jjn1056@yahoo.com>
-  
-  ribasushi - Peter Rabbitson (cpan:RIBASUSHI) <ribasushi@cpan.org>
-  
-  chip - Chip Salzenberg (cpan:CHIPS) <chip@pobox.com>
-  
-  ajgb - Alex J. G. Burzyński (cpan:AJGB) <ajgb@cpan.org>
-  
-  doy - Jesse Luehrs (cpan:DOY) <doy at tozt dot net>
-  
-  perigrin - Chris Prather (cpan:PERIGRIN) <chris@prather.org>
-  
-  Mithaldu - Christian Walde (cpan:MITHALDU) <walde.christian@googlemail.com>
-  
-  ilmari - Dagfinn Ilmari Mannsåker (cpan:ILMARI) <ilmari@ilmari.org>
-  
-  tobyink - Toby Inkster (cpan:TOBYINK) <tobyink@cpan.org>
-  
-  haarg - Graham Knop (cpan:HAARG) <haarg@haarg.org>
-  
-  =head1 COPYRIGHT
-  
-  Copyright (c) 2010-2012 the Role::Tiny L</AUTHOR> and L</CONTRIBUTORS>
-  as listed above.
-  
-  =head1 LICENSE
-  
-  This library is free software and may be distributed under the same terms
-  as perl itself.
-  
-  =cut
-ROLE_TINY
-
-$fatpacked{"Role/Tiny/With.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'ROLE_TINY_WITH';
-  package Role::Tiny::With;
-  
-  use strict;
-  use warnings;
-  
-  our $VERSION = '2.000006';
-  $VERSION = eval $VERSION;
-  
-  use Role::Tiny ();
-  
-  use Exporter 'import';
-  our @EXPORT = qw( with );
-  
-  sub with {
-      my $target = caller;
-      Role::Tiny->apply_roles_to_package($target, @_)
-  }
-  
-  1;
-  
-  =head1 NAME
-  
-  Role::Tiny::With - Neat interface for consumers of Role::Tiny roles
-  
-  =head1 SYNOPSIS
-  
-   package Some::Class;
-  
-   use Role::Tiny::With;
-  
-   with 'Some::Role';
-  
-   # The role is now mixed in
-  
-  =head1 DESCRIPTION
-  
-  C<Role::Tiny> is a minimalist role composition tool.  C<Role::Tiny::With>
-  provides a C<with> function to compose such roles.
-  
-  =head1 AUTHORS
-  
-  See L<Role::Tiny> for authors.
-  
-  =head1 COPYRIGHT AND LICENSE
-  
-  See L<Role::Tiny> for the copyright and license.
-  
-  =cut
-  
-  
-ROLE_TINY_WITH
 
 $fatpacked{"Test/Mojo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'TEST_MOJO';
   package Test::Mojo;
@@ -36755,7 +37406,8 @@ $fatpacked{"Test/Mojo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'TEST_
   use Test::More ();
   
   has [qw(message success tx)];
-  has ua => sub { Mojo::UserAgent->new->ioloop(Mojo::IOLoop->singleton) };
+  has ua =>
+    sub { Mojo::UserAgent->new(insecure => 1)->ioloop(Mojo::IOLoop->singleton) };
   
   # Silent or loud tests
   $ENV{MOJO_LOG_LEVEL} ||= $ENV{HARNESS_IS_VERBOSE} ? 'debug' : 'fatal';
@@ -36857,6 +37509,20 @@ $fatpacked{"Test/Mojo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'TEST_
   
   sub get_ok  { shift->_build_ok(GET  => @_) }
   sub head_ok { shift->_build_ok(HEAD => @_) }
+  
+  sub header_exists {
+    my ($self, $name, $desc) = @_;
+    $desc = _desc($desc, qq{header "$name" exists});
+    return $self->_test('ok', !!@{$self->tx->res->headers->every_header($name)},
+      $desc);
+  }
+  
+  sub header_exists_not {
+    my ($self, $name, $desc) = @_;
+    $desc = _desc($desc, qq{no "$name" header});
+    return $self->_test('ok', !@{$self->tx->res->headers->every_header($name)},
+      $desc);
+  }
   
   sub header_is {
     my ($self, $name, $value, $desc) = @_;
@@ -36982,8 +37648,9 @@ $fatpacked{"Test/Mojo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'TEST_
     return $self unless my $app = shift;
   
     my @args = @_ ? {config => {config_override => 1, %{shift()}}} : ();
-    return $self->app(
-      ref $app ? $app : Mojo::Server->new->build_app($app, @args));
+    return $self->app(Mojo::Server->new->build_app($app, @args)) unless ref $app;
+    $app = Mojo::Server->new->load_app($app) unless $app->isa('Mojolicious');
+    return $self->app(@args ? $app->config($args[0]{config}) : $app);
   }
   
   sub options_ok { shift->_build_ok(OPTIONS => @_) }
@@ -37081,7 +37748,7 @@ $fatpacked{"Test/Mojo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'TEST_
     if (ref $value eq 'HASH') {
       my $expect = exists $value->{text} ? 'text' : 'binary';
       $value = $value->{$expect};
-      $msg = '' unless ($type // '') eq $expect;
+      $msg   = '' unless ($type // '') eq $expect;
     }
   
     # Decode text frame if there is no type check
@@ -37178,15 +37845,16 @@ $fatpacked{"Test/Mojo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'TEST_
   
   L<Test::Mojo> is a test user agent based on L<Mojo::UserAgent>, it is usually
   used together with L<Test::More> to test L<Mojolicious> applications. Just run
-  your tests with the command L<Mojolicious::Command::test> or L<prove>.
+  your tests with L<prove>.
   
-    $ ./script/my_app test
-    $ ./script/my_app test -v t/foo.t
+    $ prove -l -v
     $ prove -l -v t/foo.t
   
   If it is not already defined, the C<MOJO_LOG_LEVEL> environment variable will
   be set to C<debug> or C<fatal>, depending on the value of the
-  C<HARNESS_IS_VERBOSE> environment variable.
+  C<HARNESS_IS_VERBOSE> environment variable. And to make it esier to test
+  HTTPS/WSS web services L<Mojo::UserAgent/"insecure"> will be activated by
+  default for L</"ua">.
   
   See L<Mojolicious::Guides::Testing> for more.
   
@@ -37230,7 +37898,7 @@ $fatpacked{"Test/Mojo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'TEST_
     };
     $t->get_ok('/')
       ->status_is(302)
-      ->$location_is('http://mojolicious.org')
+      ->$location_is('https://mojolicious.org')
       ->or(sub { diag 'Must have been Joel!' });
   
   =head2 tx
@@ -37437,7 +38105,7 @@ $fatpacked{"Test/Mojo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'TEST_
   arguments as L<Mojo::UserAgent/"get">, except for the callback.
   
     # Run tests against remote host
-    $t->get_ok('http://mojolicious.org/perldoc')->status_is(200);
+    $t->get_ok('https://mojolicious.org/perldoc')->status_is(200);
   
     # Use relative URL for request with Basic authentication
     $t->get_ok('//sri:secr3t@/secrets.json')
@@ -37458,6 +38126,20 @@ $fatpacked{"Test/Mojo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'TEST_
   
   Perform a C<HEAD> request and check for transport errors, takes the same
   arguments as L<Mojo::UserAgent/"head">, except for the callback.
+  
+  =head2 header_exists
+  
+    $t = $t->header_exists('ETag');
+    $t = $t->header_exists('ETag', 'header exists');
+  
+  Check if response header exists.
+  
+  =head2 header_exists_not
+  
+    $t = $t->header_exists_not('ETag');
+    $t = $t->header_exists_not('ETag', 'header is missing');
+  
+  Opposite of L</"header_exists">.
   
   =head2 header_is
   
@@ -37620,15 +38302,23 @@ $fatpacked{"Test/Mojo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'TEST_
   
     my $t = Test::Mojo->new;
     my $t = Test::Mojo->new('MyApp');
-    my $t = Test::Mojo->new(MyApp => {foo => 'bar', baz => 23});
+    my $t = Test::Mojo->new('MyApp', {foo => 'bar'});
+    my $t = Test::Mojo->new(Mojo::File->new('/path/to/myapp.pl'));
+    my $t = Test::Mojo->new(Mojo::File->new('/path/to/myapp.pl'), {foo => 'bar'});
     my $t = Test::Mojo->new(MyApp->new);
+    my $t = Test::Mojo->new(MyApp->new, {foo => 'bar'});
   
-  Construct a new L<Test::Mojo> object. In addition to a class name, you can pass
-  along a hash reference with configuration values that will be used to
-  instantiate the application. The special configuration value C<config_override>
-  will be set in L<Mojo/"config"> as well, which is used to disable configuration
-  plugins like L<Mojolicious::Plugin::Config> and
+  Construct a new L<Test::Mojo> object. In addition to a class name or
+  L<Mojo::File> object pointing to the application script, you can pass along a
+  hash reference with configuration values that will be used to override the
+  application configuration. The special configuration value C<config_override>
+  will be set in L<Mojolicious/"config"> as well, which is used to disable
+  configuration plugins like L<Mojolicious::Plugin::Config> and
   L<Mojolicious::Plugin::JSONConfig> for tests.
+  
+    # Load application script relative to the "t" directory
+    use Mojo::File 'path';
+    my $t = Test::Mojo->new(path(__FILE__)->dirname->sibling('myapp.pl'));
   
   =head2 options_ok
   
@@ -37799,12 +38489,252 @@ $fatpacked{"Test/Mojo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'TEST_
   
   =head1 SEE ALSO
   
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
   
   =cut
 TEST_MOJO
 
-$fatpacked{"darwin-2level/List/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'DARWIN-2LEVEL_LIST_UTIL';
+$fatpacked{"ojo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'OJO';
+  package ojo;
+  use Mojo::Base -strict;
+  
+  use Benchmark qw(timeit timestr :hireswallclock);
+  use Mojo::ByteStream 'b';
+  use Mojo::Collection 'c';
+  use Mojo::DOM;
+  use Mojo::File 'path';
+  use Mojo::JSON 'j';
+  use Mojo::Util qw(dumper monkey_patch);
+  
+  # Silent one-liners
+  $ENV{MOJO_LOG_LEVEL} ||= 'fatal';
+  
+  sub import {
+  
+    # Mojolicious::Lite
+    my $caller = caller;
+    eval "package $caller; use Mojolicious::Lite; 1" or die $@;
+    Mojo::Base->import(-strict, $] < 5.020 ? () : (-signatures));
+    my $ua = $caller->app->ua;
+    $ua->server->app->hook(around_action => sub { local $_ = $_[1]; $_[0]() });
+  
+    $ua->max_redirects(10) unless defined $ENV{MOJO_MAX_REDIRECTS};
+    $ua->proxy->detect unless defined $ENV{MOJO_PROXY};
+  
+    # The ojo DSL
+    monkey_patch $caller,
+      a => sub { $caller->can('any')->(@_) and return $ua->server->app },
+      b => \&b,
+      c => \&c,
+      d => sub { $ua->delete(@_)->result },
+      f => \&path,
+      g => sub { $ua->get(@_)->result },
+      h => sub { $ua->head(@_)->result },
+      j => \&j,
+      n => sub (&@) { say STDERR timestr timeit($_[1] // 1, $_[0]) },
+      o => sub { $ua->options(@_)->result },
+      p => sub { $ua->post(@_)->result },
+      r => \&dumper,
+      t => sub { $ua->patch(@_)->result },
+      u => sub { $ua->put(@_)->result },
+      x => sub { Mojo::DOM->new(@_) };
+  }
+  
+  1;
+  
+  =encoding utf8
+  
+  =head1 NAME
+  
+  ojo - Fun one-liners with Mojo
+  
+  =head1 SYNOPSIS
+  
+    $ perl -Mojo -E 'say g("mojolicious.org")->dom->at("title")->text'
+  
+  =head1 DESCRIPTION
+  
+  A collection of automatically exported functions for fun Perl one-liners. Ten
+  redirects will be followed by default, you can change this behavior with the
+  C<MOJO_MAX_REDIRECTS> environment variable.
+  
+    $ MOJO_MAX_REDIRECTS=0 perl -Mojo -E 'say g("example.com")->code'
+  
+  Proxy detection is enabled by default, but you can disable it with the
+  C<MOJO_PROXY> environment variable.
+  
+    $ MOJO_PROXY=0 perl -Mojo -E 'say g("example.com")->body'
+  
+  TLS certificate verification can be disabled with the C<MOJO_INSECURE>
+  environment variable.
+  
+    $ MOJO_INSECURE=1 perl -Mojo -E 'say g("https://127.0.0.1:3000")->body'
+  
+  Every L<ojo> one-liner is also a L<Mojolicious::Lite> application.
+  
+    $ perl -Mojo -E 'get "/" => {inline => "%= time"}; app->start' get /
+  
+  On Perl 5.20+ L<subroutine signatures|perlsub/"Signatures"> will be enabled
+  automatically.
+  
+    $ perl -Mojo -E 'a(sub ($c) { $c->render(text => 'Hello!') })->start' get /
+  
+  If it is not already defined, the C<MOJO_LOG_LEVEL> environment variable will
+  be set to C<fatal>.
+  
+  =head1 FUNCTIONS
+  
+  L<ojo> implements the following functions, which are automatically exported.
+  
+  =head2 a
+  
+    my $app = a('/hello' => sub { $_->render(json => {hello => 'world'}) });
+  
+  Create a route with L<Mojolicious::Lite/"any"> and return the current
+  L<Mojolicious::Lite> object. The current controller object is also available to
+  actions as C<$_>. See also L<Mojolicious::Guides::Tutorial> for more argument
+  variations.
+  
+    $ perl -Mojo -E 'a("/hello" => {text => "Hello Mojo!"})->start' daemon
+  
+  =head2 b
+  
+    my $stream = b('lalala');
+  
+  Turn string into a L<Mojo::ByteStream> object.
+  
+    $ perl -Mojo -E 'b(g("mojolicious.org")->body)->html_unescape->say'
+  
+  =head2 c
+  
+    my $collection = c(1, 2, 3);
+  
+  Turn list into a L<Mojo::Collection> object.
+  
+  =head2 d
+  
+    my $res = d('example.com');
+    my $res = d('http://example.com' => {Accept => '*/*'} => 'Hi!');
+    my $res = d('http://example.com' => {Accept => '*/*'} => form => {a => 'b'});
+    my $res = d('http://example.com' => {Accept => '*/*'} => json => {a => 'b'});
+  
+  Perform C<DELETE> request with L<Mojo::UserAgent/"delete"> and return resulting
+  L<Mojo::Message::Response> object.
+  
+  =head2 f
+  
+    my $path = f('/home/sri/foo.txt');
+  
+  Turn string into a L<Mojo::File> object.
+  
+    $ perl -Mojo -E 'say r j f("hello.json")->slurp'
+  
+  =head2 g
+  
+    my $res = g('example.com');
+    my $res = g('http://example.com' => {Accept => '*/*'} => 'Hi!');
+    my $res = g('http://example.com' => {Accept => '*/*'} => form => {a => 'b'});
+    my $res = g('http://example.com' => {Accept => '*/*'} => json => {a => 'b'});
+  
+  Perform C<GET> request with L<Mojo::UserAgent/"get"> and return resulting
+  L<Mojo::Message::Response> object.
+  
+    $ perl -Mojo -E 'say g("mojolicious.org")->dom("h1")->map("text")->join("\n")'
+  
+  =head2 h
+  
+    my $res = h('example.com');
+    my $res = h('http://example.com' => {Accept => '*/*'} => 'Hi!');
+    my $res = h('http://example.com' => {Accept => '*/*'} => form => {a => 'b'});
+    my $res = h('http://example.com' => {Accept => '*/*'} => json => {a => 'b'});
+  
+  Perform C<HEAD> request with L<Mojo::UserAgent/"head"> and return resulting
+  L<Mojo::Message::Response> object.
+  
+  =head2 j
+  
+    my $bytes = j([1, 2, 3]);
+    my $bytes = j({foo => 'bar'});
+    my $value = j($bytes);
+  
+  Encode Perl data structure or decode JSON with L<Mojo::JSON/"j">.
+  
+    $ perl -Mojo -E 'f("hello.json")->spurt(j {hello => "world!"})'
+  
+  =head2 n
+  
+    n {...};
+    n {...} 100;
+  
+  Benchmark block and print the results to C<STDERR>, with an optional number of
+  iterations, which defaults to C<1>.
+  
+    $ perl -Mojo -E 'n { say g("mojolicious.org")->code }'
+  
+  =head2 o
+  
+    my $res = o('example.com');
+    my $res = o('http://example.com' => {Accept => '*/*'} => 'Hi!');
+    my $res = o('http://example.com' => {Accept => '*/*'} => form => {a => 'b'});
+    my $res = o('http://example.com' => {Accept => '*/*'} => json => {a => 'b'});
+  
+  Perform C<OPTIONS> request with L<Mojo::UserAgent/"options"> and return
+  resulting L<Mojo::Message::Response> object.
+  
+  =head2 p
+  
+    my $res = p('example.com');
+    my $res = p('http://example.com' => {Accept => '*/*'} => 'Hi!');
+    my $res = p('http://example.com' => {Accept => '*/*'} => form => {a => 'b'});
+    my $res = p('http://example.com' => {Accept => '*/*'} => json => {a => 'b'});
+  
+  Perform C<POST> request with L<Mojo::UserAgent/"post"> and return resulting
+  L<Mojo::Message::Response> object.
+  
+  =head2 r
+  
+    my $perl = r({data => 'structure'});
+  
+  Dump a Perl data structure with L<Mojo::Util/"dumper">.
+  
+    perl -Mojo -E 'say r g("example.com")->headers->to_hash'
+  
+  =head2 t
+  
+    my $res = t('example.com');
+    my $res = t('http://example.com' => {Accept => '*/*'} => 'Hi!');
+    my $res = t('http://example.com' => {Accept => '*/*'} => form => {a => 'b'});
+    my $res = t('http://example.com' => {Accept => '*/*'} => json => {a => 'b'});
+  
+  Perform C<PATCH> request with L<Mojo::UserAgent/"patch"> and return resulting
+  L<Mojo::Message::Response> object.
+  
+  =head2 u
+  
+    my $res = u('example.com');
+    my $res = u('http://example.com' => {Accept => '*/*'} => 'Hi!');
+    my $res = u('http://example.com' => {Accept => '*/*'} => form => {a => 'b'});
+    my $res = u('http://example.com' => {Accept => '*/*'} => json => {a => 'b'});
+  
+  Perform C<PUT> request with L<Mojo::UserAgent/"put"> and return resulting
+  L<Mojo::Message::Response> object.
+  
+  =head2 x
+  
+    my $dom = x('<div>Hello!</div>');
+  
+  Turn HTML/XML input into L<Mojo::DOM> object.
+  
+    $ perl -Mojo -E 'say x(f("test.html")->slurp)->at("title")->text'
+  
+  =head1 SEE ALSO
+  
+  L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
+  
+  =cut
+OJO
+
+$fatpacked{"x86_64-linux/List/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'X86_64-LINUX_LIST_UTIL';
   # Copyright (c) 1997-2009 Graham Barr <gbarr@pobox.com>. All rights reserved.
   # This program is free software; you can redistribute it and/or
   # modify it under the same terms as Perl itself.
@@ -37820,11 +38750,11 @@ $fatpacked{"darwin-2level/List/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."
   our @ISA        = qw(Exporter);
   our @EXPORT_OK  = qw(
     all any first min max minstr maxstr none notall product reduce sum sum0 shuffle uniq uniqnum uniqstr
-    pairs unpairs pairkeys pairvalues pairmap pairgrep pairfirst
+    head tail pairs unpairs pairkeys pairvalues pairmap pairgrep pairfirst
   );
-  our $VERSION    = "1.49";
+  our $VERSION    = "1.52";
   our $XS_VERSION = $VERSION;
-  $VERSION    = eval $VERSION;
+  $VERSION =~ tr/_//d;
   
   require XSLoader;
   XSLoader::load('List::Util', $XS_VERSION);
@@ -37845,6 +38775,7 @@ $fatpacked{"darwin-2level/List/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."
   # For objects returned by pairs()
   sub List::Util::_Pair::key   { shift->[0] }
   sub List::Util::_Pair::value { shift->[1] }
+  sub List::Util::_Pair::TO_JSON { [ @{+shift} ] }
   
   =head1 NAME
   
@@ -38148,6 +39079,9 @@ $fatpacked{"darwin-2level/List/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."
          ...
       }
   
+  Since version C<1.51> they also have a C<TO_JSON> method to ease
+  serialisation.
+  
   =head2 unpairs
   
       my @kvlist = unpairs @pairs
@@ -38360,6 +39294,36 @@ $fatpacked{"darwin-2level/List/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."
   
   =cut
   
+  =head2 head
+  
+      my @values = head $size, @list;
+  
+  I<Since version 1.50.>
+  
+  Returns the first C<$size> elements from C<@list>. If C<$size> is negative, returns
+  all but the last C<$size> elements from C<@list>.
+  
+      @result = head 2, qw( foo bar baz );
+      # foo, bar
+  
+      @result = head -2, qw( foo bar baz );
+      # foo
+  
+  =head2 tail
+  
+      my @values = tail $size, @list;
+  
+  I<Since version 1.50.>
+  
+  Returns the last C<$size> elements from C<@list>. If C<$size> is negative, returns
+  all but the first C<$size> elements from C<@list>.
+  
+      @result = tail 2, qw( foo bar baz );
+      # bar, baz
+  
+      @result = tail -2, qw( foo bar baz );
+      # baz
+  
   =head1 KNOWN BUGS
   
   =head2 RT #95409
@@ -38449,16 +39413,16 @@ $fatpacked{"darwin-2level/List/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."
   =cut
   
   1;
-DARWIN-2LEVEL_LIST_UTIL
+X86_64-LINUX_LIST_UTIL
 
-$fatpacked{"darwin-2level/List/Util/XS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'DARWIN-2LEVEL_LIST_UTIL_XS';
+$fatpacked{"x86_64-linux/List/Util/XS.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'X86_64-LINUX_LIST_UTIL_XS';
   package List::Util::XS;
   use strict;
   use warnings;
   use List::Util;
   
-  our $VERSION = "1.49";       # FIXUP
-  $VERSION = eval $VERSION;    # FIXUP
+  our $VERSION = "1.52";       # FIXUP
+  $VERSION =~ tr/_//d;         # FIXUP
   
   1;
   __END__
@@ -38494,9 +39458,9 @@ $fatpacked{"darwin-2level/List/Util/XS.pm"} = '#line '.(1+__LINE__).' "'.__FILE_
   modify it under the same terms as Perl itself.
   
   =cut
-DARWIN-2LEVEL_LIST_UTIL_XS
+X86_64-LINUX_LIST_UTIL_XS
 
-$fatpacked{"darwin-2level/Scalar/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'DARWIN-2LEVEL_SCALAR_UTIL';
+$fatpacked{"x86_64-linux/Scalar/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'X86_64-LINUX_SCALAR_UTIL';
   # Copyright (c) 1997-2007 Graham Barr <gbarr@pobox.com>. All rights reserved.
   # This program is free software; you can redistribute it and/or
   # modify it under the same terms as Perl itself.
@@ -38516,8 +39480,8 @@ $fatpacked{"darwin-2level/Scalar/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
     dualvar isdual isvstring looks_like_number openhandle readonly set_prototype
     tainted
   );
-  our $VERSION    = "1.49";
-  $VERSION   = eval $VERSION;
+  our $VERSION    = "1.52";
+  $VERSION =~ tr/_//d;
   
   require List::Util; # List::Util loads the XS
   List::Util->VERSION( $VERSION ); # Ensure we got the right XS version (RT#100863)
@@ -38775,8 +39739,8 @@ $fatpacked{"darwin-2level/Scalar/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
   
       my $fh = openhandle( $fh );
   
-  Returns C<$fh> itself if C<$fh> may be used as a filehandle and is open, or is
-  is a tied handle. Otherwise C<undef> is returned.
+  Returns C<$fh> itself, if C<$fh> may be used as a filehandle and is open, or if
+  it is a tied handle. Otherwise C<undef> is returned.
   
       $fh = openhandle(*STDIN);           # \*STDIN
       $fh = openhandle(\*STDIN);          # \*STDIN
@@ -38857,9 +39821,9 @@ $fatpacked{"darwin-2level/Scalar/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__
   it under the same terms as Perl itself.
   
   =cut
-DARWIN-2LEVEL_SCALAR_UTIL
+X86_64-LINUX_SCALAR_UTIL
 
-$fatpacked{"darwin-2level/Sub/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'DARWIN-2LEVEL_SUB_UTIL';
+$fatpacked{"x86_64-linux/Sub/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'X86_64-LINUX_SUB_UTIL';
   # Copyright (c) 2014 Paul Evans <leonerd@leonerd.org.uk>. All rights reserved.
   # This program is free software; you can redistribute it and/or
   # modify it under the same terms as Perl itself.
@@ -38877,8 +39841,8 @@ $fatpacked{"darwin-2level/Sub/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
     subname set_subname
   );
   
-  our $VERSION    = "1.49";
-  $VERSION   = eval $VERSION;
+  our $VERSION    = "1.52";
+  $VERSION =~ tr/_//d;
   
   require List::Util; # as it has the XS
   List::Util->VERSION( $VERSION ); # Ensure we got the right XS version (RT#100863)
@@ -38957,14 +39921,16 @@ $fatpacked{"darwin-2level/Sub/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
   Returns the name of the given C<$code> reference, if it has one. Normal named
   subs will give a fully-qualified name consisting of the package and the
   localname separated by C<::>. Anonymous code references will give C<__ANON__>
-  as the localname. If a name has been set using L</set_subname>, this name will
-  be returned instead.
+  as the localname. If the package the code was compiled in has been deleted
+  (e.g. using C<delete_package> from L<Symbol>), C<__ANON__> will be returned as
+  the package name. If a name has been set using L</set_subname>, this name will be
+  returned instead.
   
   This function was inspired by C<sub_fullname> from L<Sub::Identify>. The
   remaining functions that C<Sub::Identify> implements can easily be emulated
   using regexp operations, such as
   
-   sub get_code_info { return (subname $_[0]) =~ m/^(.+)::(.+?)$/ }
+   sub get_code_info { return (subname $_[0]) =~ m/^(.+)::(.*?)$/ }
    sub sub_name      { return (get_code_info $_[0])[0] }
    sub stash_name    { return (get_code_info $_[0])[1] }
   
@@ -39011,242 +39977,7 @@ $fatpacked{"darwin-2level/Sub/Util.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\
   =cut
   
   1;
-DARWIN-2LEVEL_SUB_UTIL
-
-$fatpacked{"ojo.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'OJO';
-  package ojo;
-  use Mojo::Base -strict;
-  
-  use Benchmark qw(timeit timestr :hireswallclock);
-  use Mojo::ByteStream 'b';
-  use Mojo::Collection 'c';
-  use Mojo::DOM;
-  use Mojo::File 'path';
-  use Mojo::JSON 'j';
-  use Mojo::Util qw(dumper monkey_patch);
-  
-  # Silent one-liners
-  $ENV{MOJO_LOG_LEVEL} ||= 'fatal';
-  
-  sub import {
-  
-    # Mojolicious::Lite
-    my $caller = caller;
-    eval "package $caller; use Mojolicious::Lite; 1" or die $@;
-    Mojo::Base->import(-strict, $] < 5.020 ? () : (-signatures));
-    my $ua = $caller->app->ua;
-    $ua->server->app->hook(around_action => sub { local $_ = $_[1]; $_[0]() });
-  
-    $ua->max_redirects(10) unless defined $ENV{MOJO_MAX_REDIRECTS};
-    $ua->proxy->detect unless defined $ENV{MOJO_PROXY};
-  
-    # The ojo DSL
-    monkey_patch $caller,
-      a => sub { $caller->can('any')->(@_) and return $ua->server->app },
-      b => \&b,
-      c => \&c,
-      d => sub { $ua->delete(@_)->result },
-      f => \&path,
-      g => sub { $ua->get(@_)->result },
-      h => sub { $ua->head(@_)->result },
-      j => \&j,
-      n => sub (&@) { say STDERR timestr timeit($_[1] // 1, $_[0]) },
-      o => sub      { $ua->options(@_)->result },
-      p => sub      { $ua->post(@_)->result },
-      r => \&dumper,
-      t => sub { $ua->patch(@_)->result },
-      u => sub { $ua->put(@_)->result },
-      x => sub { Mojo::DOM->new(@_) };
-  }
-  
-  1;
-  
-  =encoding utf8
-  
-  =head1 NAME
-  
-  ojo - Fun one-liners with Mojo
-  
-  =head1 SYNOPSIS
-  
-    $ perl -Mojo -E 'say g("mojolicious.org")->dom->at("title")->text'
-  
-  =head1 DESCRIPTION
-  
-  A collection of automatically exported functions for fun Perl one-liners. Ten
-  redirects will be followed by default, you can change this behavior with the
-  C<MOJO_MAX_REDIRECTS> environment variable.
-  
-    $ MOJO_MAX_REDIRECTS=0 perl -Mojo -E 'say g("example.com")->code'
-  
-  Proxy detection is enabled by default, but you can disable it with the
-  C<MOJO_PROXY> environment variable.
-  
-    $ MOJO_PROXY=0 perl -Mojo -E 'say g("example.com")->body'
-  
-  Every L<ojo> one-liner is also a L<Mojolicious::Lite> application.
-  
-    $ perl -Mojo -E 'get "/" => {inline => "%= time"}; app->start' get /
-  
-  On Perl 5.20+ L<subroutine signatures|perlsub/"Signatures"> will be enabled
-  automatically.
-  
-    $ perl -Mojo -E 'a(sub ($c) { $c->render(text => 'Hello!') })->start' get /
-  
-  If it is not already defined, the C<MOJO_LOG_LEVEL> environment variable will
-  be set to C<fatal>.
-  
-  =head1 FUNCTIONS
-  
-  L<ojo> implements the following functions, which are automatically exported.
-  
-  =head2 a
-  
-    my $app = a('/hello' => sub { $_->render(json => {hello => 'world'}) });
-  
-  Create a route with L<Mojolicious::Lite/"any"> and return the current
-  L<Mojolicious::Lite> object. The current controller object is also available to
-  actions as C<$_>. See also L<Mojolicious::Guides::Tutorial> for more argument
-  variations.
-  
-    $ perl -Mojo -E 'a("/hello" => {text => "Hello Mojo!"})->start' daemon
-  
-  =head2 b
-  
-    my $stream = b('lalala');
-  
-  Turn string into a L<Mojo::ByteStream> object.
-  
-    $ perl -Mojo -E 'b(g("mojolicious.org")->body)->html_unescape->say'
-  
-  =head2 c
-  
-    my $collection = c(1, 2, 3);
-  
-  Turn list into a L<Mojo::Collection> object.
-  
-  =head2 d
-  
-    my $res = d('example.com');
-    my $res = d('http://example.com' => {Accept => '*/*'} => 'Hi!');
-    my $res = d('http://example.com' => {Accept => '*/*'} => form => {a => 'b'});
-    my $res = d('http://example.com' => {Accept => '*/*'} => json => {a => 'b'});
-  
-  Perform C<DELETE> request with L<Mojo::UserAgent/"delete"> and return resulting
-  L<Mojo::Message::Response> object.
-  
-  =head2 f
-  
-    my $path = f('/home/sri/foo.txt');
-  
-  Turn string into a L<Mojo::File> object.
-  
-    $ perl -Mojo -E 'say r j f("hello.json")->slurp'
-  
-  =head2 g
-  
-    my $res = g('example.com');
-    my $res = g('http://example.com' => {Accept => '*/*'} => 'Hi!');
-    my $res = g('http://example.com' => {Accept => '*/*'} => form => {a => 'b'});
-    my $res = g('http://example.com' => {Accept => '*/*'} => json => {a => 'b'});
-  
-  Perform C<GET> request with L<Mojo::UserAgent/"get"> and return resulting
-  L<Mojo::Message::Response> object.
-  
-    $ perl -Mojo -E 'say g("mojolicious.org")->dom("h1")->map("text")->join("\n")'
-  
-  =head2 h
-  
-    my $res = h('example.com');
-    my $res = h('http://example.com' => {Accept => '*/*'} => 'Hi!');
-    my $res = h('http://example.com' => {Accept => '*/*'} => form => {a => 'b'});
-    my $res = h('http://example.com' => {Accept => '*/*'} => json => {a => 'b'});
-  
-  Perform C<HEAD> request with L<Mojo::UserAgent/"head"> and return resulting
-  L<Mojo::Message::Response> object.
-  
-  =head2 j
-  
-    my $bytes = j([1, 2, 3]);
-    my $bytes = j({foo => 'bar'});
-    my $value = j($bytes);
-  
-  Encode Perl data structure or decode JSON with L<Mojo::JSON/"j">.
-  
-    $ perl -Mojo -E 'f("hello.json")->spurt(j {hello => "world!"})'
-  
-  =head2 n
-  
-    n {...};
-    n {...} 100;
-  
-  Benchmark block and print the results to C<STDERR>, with an optional number of
-  iterations, which defaults to C<1>.
-  
-    $ perl -Mojo -E 'n { say g("mojolicious.org")->code }'
-  
-  =head2 o
-  
-    my $res = o('example.com');
-    my $res = o('http://example.com' => {Accept => '*/*'} => 'Hi!');
-    my $res = o('http://example.com' => {Accept => '*/*'} => form => {a => 'b'});
-    my $res = o('http://example.com' => {Accept => '*/*'} => json => {a => 'b'});
-  
-  Perform C<OPTIONS> request with L<Mojo::UserAgent/"options"> and return
-  resulting L<Mojo::Message::Response> object.
-  
-  =head2 p
-  
-    my $res = p('example.com');
-    my $res = p('http://example.com' => {Accept => '*/*'} => 'Hi!');
-    my $res = p('http://example.com' => {Accept => '*/*'} => form => {a => 'b'});
-    my $res = p('http://example.com' => {Accept => '*/*'} => json => {a => 'b'});
-  
-  Perform C<POST> request with L<Mojo::UserAgent/"post"> and return resulting
-  L<Mojo::Message::Response> object.
-  
-  =head2 r
-  
-    my $perl = r({data => 'structure'});
-  
-  Dump a Perl data structure with L<Mojo::Util/"dumper">.
-  
-    perl -Mojo -E 'say r g("example.com")->headers->to_hash'
-  
-  =head2 t
-  
-    my $res = t('example.com');
-    my $res = t('http://example.com' => {Accept => '*/*'} => 'Hi!');
-    my $res = t('http://example.com' => {Accept => '*/*'} => form => {a => 'b'});
-    my $res = t('http://example.com' => {Accept => '*/*'} => json => {a => 'b'});
-  
-  Perform C<PATCH> request with L<Mojo::UserAgent/"patch"> and return resulting
-  L<Mojo::Message::Response> object.
-  
-  =head2 u
-  
-    my $res = u('example.com');
-    my $res = u('http://example.com' => {Accept => '*/*'} => 'Hi!');
-    my $res = u('http://example.com' => {Accept => '*/*'} => form => {a => 'b'});
-    my $res = u('http://example.com' => {Accept => '*/*'} => json => {a => 'b'});
-  
-  Perform C<PUT> request with L<Mojo::UserAgent/"put"> and return resulting
-  L<Mojo::Message::Response> object.
-  
-  =head2 x
-  
-    my $dom = x('<div>Hello!</div>');
-  
-  Turn HTML/XML input into L<Mojo::DOM> object.
-  
-    $ perl -Mojo -E 'say x(f("test.html")->slurp)->at("title")->text'
-  
-  =head1 SEE ALSO
-  
-  L<Mojolicious>, L<Mojolicious::Guides>, L<http://mojolicious.org>.
-  
-  =cut
-OJO
+X86_64-LINUX_SUB_UTIL
 
 s/^  //mg for values %fatpacked;
 
@@ -39285,6 +40016,7 @@ unshift @INC, bless \%fatpacked, $class;
   } # END OF FATPACK CODE
 
 
+package FatPack::Maint::Build;
 
 use App::FatPacker ();
 use Applify;
@@ -39296,6 +40028,7 @@ use Mojo::Base -base;
 use Mojo::Collection 'c';
 use Mojo::File ();
 use Mojo::Home;
+use Mojo::Loader 'find_modules';
 
 our $VERSION = '1.2'; # bump this
 
@@ -39307,13 +40040,29 @@ extends 'Mojo::Base';
 
 has fatpacker => sub { App::FatPacker->new };
 
+my $develop_tag = qr/^#.*DEVELOPERS:.*/;
+my $fatpack_tag = qr/^#.*__FATPACK__/;
+my $shebang_tag = qr|^#!/usr/bin/env perl|;
+
+sub expand_extras {
+  my ($self, @result) = (shift);
+  my $extras = $self->extra;
+  for my $m(@$extras) {
+      push @result, $m;
+      push @result, find_modules($m) if $self->namespace;
+  }
+  return \@result;
+}
+
 sub fatpack_script {
   my $self = shift;
   my ($script, $target, $shebang_replace) = @_;
   my @replaced;
 
   my $pack = $self->fatpacker;
-  my @modules = split /\r?\n/, $pack->trace(args => [ $script ]);
+  
+  my @modules = split /\r?\n/, $pack->trace(args => [ $script ], 
+                                            'use' => $self->expand_extras);
   if ($self->verbose) {
     say "Found " . @modules.  " modules";
   }
@@ -39329,10 +40078,17 @@ sub fatpack_script {
   my $asset = Mojo::Asset::Memory->new(max_memory_size => 2e7);
 
   my $packed = $pack->fatpack_file();
-  my $lines = c(split /\r?\n/, Mojo::File->new($script)->slurp)->map(sub {
-    $replaced[0] += $_ =~ s|^#!/usr/bin/env perl|$shebang_replace| if $shebang_replace;
-    $replaced[1] += $_ =~ s/^#.*DEVELOPERS:.*/# DO NOT EDIT -- this is an auto generated file/;
-    $replaced[2] += $_ =~ s/^#.*__FATPACK__/$packed/;
+  my $lines = c(split m/\r?\n/, Mojo::File->new($script)->slurp)
+      ->tap(sub {
+          splice @$_, 1, 0, '# __FATPACK__' unless $_->grep($fatpack_tag)->size;
+          splice @$_, 1, 0, '# DEVELOPERS:' unless $_->grep($develop_tag)->size;
+            })
+      ->map(sub {
+          $replaced[0] += $_ =~
+              s/$shebang_tag/$shebang_replace/ if $shebang_replace;
+          $replaced[1] += $_ =~ 
+              s/$develop_tag/# DO NOT EDIT -- this is an auto generated file/;
+          $replaced[2] += $_ =~ s/$fatpack_tag/$packed/;
     $_;
   });
 
@@ -39400,22 +40156,27 @@ sub __lines_of {
 
 has includes => sub { Mojo::Home->new->detect->to_abs->child('lib') };
 
-option file => source => 'path to source script', (
+option str  => extra  => 'Modules to additionally use. e.g. App::Foo::Bar',
+    n_of => '@';
+option flag => namespace => 'Find (non-recursively) modules in each of -extra namespaces';
+option flag => replace_shebang => 'Modify the shebang to use /usr/bin/perl',
+    default => 0;
+option file => source => 'Path to source script', (
     required => 1, isa => 'Mojo::File');
-option file => target => 'path to target script', (
+option file => target => 'Path to target script', (
     required => 1, isa => 'Mojo::File');
-option flag => verbose => 'increase level of notification', default => 0;
+option flag => verbose => 'Increase level of notification', default => 0;
 
 app {
   my $self = shift;
 
-  $ENV{PERL5OPT} = join(' ', '-I'.$self->includes,
-    ($ENV{PERL5OPT} ? $ENV{PERL5OPT} : ()));
+  $ENV{PERL5OPT} = c('-I'.$self->includes,
+    ($ENV{PERL5OPT} ? $ENV{PERL5OPT} : ()))->uniq->join(' ')->to_string;
   say "PERL5OPT = $ENV{PERL5OPT}" if $self->verbose;
 
-  unlink $self->target;
-
-  my @replaced = $self->fatpack_script($self->source, $self->target, '#!/usr/bin/perl');
+  $self->target->remove->dirname->make_path;
+  my $shebang = $self->replace_shebang ? '#!/usr/bin/perl' : undef;
+  my @replaced = $self->fatpack_script($self->source, $self->target, $shebang);
 
   chmod 0755, $self->target;
 

@@ -1,3 +1,4 @@
+#! -*- mode: perl; -*-
 use strict;
 use warnings;
 
@@ -70,21 +71,24 @@ is $stderr, '', 'no messages on STDERR';
 like $stdout, qr/^Found\s(\d+)\smodules$/m, 'verbose messages';
 like $stdout, qr/^Found\s(\d+)\spacklists$/m, 'verbose messages';
 like $stdout, qr/^wrote:/m, 'verbose';
-diag $stdout;
+# diag "STDOUT was:\n", $stdout;
+# diag "STDERR was:\n", $stderr;
 is $exited, 0, 'success';
 
-## TODO: discern what __require is set to achieve.
-# if (0) {
-#   my $module = 'Applify';
-#   (my $filename = $module) =~ s{::}{/}g; $filename .= '.pm';
-#   my $file = Mojo::File->new($INC{$filename});
-#   my $files = { $filename => $file->slurp };
-#   my $code = $app->fatpacker->fatpack_code($files);
-#   delete_package $module;
-#   # delete $INC{$filename};
-#   eval $code;
-#   is $app->__require($filename), 0, 'test __require - this is not fatpacked';
-# }
+{
+    local $TODO = 'discern what __require is set to achieve.';
+    if (0) {
+        my $module = 'Applify';
+        (my $filename = $module) =~ s{::}{/}g; $filename .= '.pm';
+        my $file = Mojo::File->new($INC{$filename});
+        my $files = { $filename => $file->slurp };
+        my $code = $app->fatpacker->fatpack_code($files);
+        delete_package $module;
+        # delete $INC{$filename};
+        eval $code;
+        is $app->__require($filename), 0, 'test __require - this is not fatpacked';
+    }
+}
 
 like $target->slurp, qr/END OF FATPACK CODE/m, 'fatpack included';
 
@@ -105,5 +109,5 @@ app { warn "Hello World."; return 0; };
 # __FATPACK__
 
 use Applify;
-use HTML::TagSet;
+use HTML::Tagset;
 app { warn "Hello World."; return 0; };

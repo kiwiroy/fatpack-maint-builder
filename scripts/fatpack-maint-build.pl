@@ -2,6 +2,7 @@
 
 # DEVELOPERS: Read maint/build.sh in the repo how to update this
 # __FATPACK__
+package FatPack::Maint::Build;
 
 use App::FatPacker ();
 use Applify;
@@ -13,6 +14,7 @@ use Mojo::Base -base;
 use Mojo::Collection 'c';
 use Mojo::File ();
 use Mojo::Home;
+use Mojo::Loader 'find_modules';
 
 our $VERSION = '1.2'; # bump this
 
@@ -24,13 +26,29 @@ extends 'Mojo::Base';
 
 has fatpacker => sub { App::FatPacker->new };
 
+my $develop_tag = qr/^#.*DEVELOPERS:.*/;
+my $fatpack_tag = qr/^#.*__FATPACK__/;
+my $shebang_tag = qr|^#!/usr/bin/env perl|;
+
+sub expand_extras {
+  my ($self, @result) = (shift);
+  my $extras = $self->extra;
+  for my $m(@$extras) {
+      push @result, $m;
+      push @result, find_modules($m) if $self->namespace;
+  }
+  return \@result;
+}
+
 sub fatpack_script {
   my $self = shift;
   my ($script, $target, $shebang_replace) = @_;
   my @replaced;
 
   my $pack = $self->fatpacker;
-  my @modules = split /\r?\n/, $pack->trace(args => [ $script ]);
+  
+  my @modules = split /\r?\n/, $pack->trace(args => [ $script ], 
+                                            'use' => $self->expand_extras);
   if ($self->verbose) {
     say "Found " . @modules.  " modules";
   }
@@ -46,10 +64,17 @@ sub fatpack_script {
   my $asset = Mojo::Asset::Memory->new(max_memory_size => 2e7);
 
   my $packed = $pack->fatpack_file();
-  my $lines = c(split /\r?\n/, Mojo::File->new($script)->slurp)->map(sub {
-    $replaced[0] += $_ =~ s|^#!/usr/bin/env perl|$shebang_replace| if $shebang_replace;
-    $replaced[1] += $_ =~ s/^#.*DEVELOPERS:.*/# DO NOT EDIT -- this is an auto generated file/;
-    $replaced[2] += $_ =~ s/^#.*__FATPACK__/$packed/;
+  my $lines = c(split m/\r?\n/, Mojo::File->new($script)->slurp)
+      ->tap(sub {
+          splice @$_, 1, 0, '# __FATPACK__' unless $_->grep($fatpack_tag)->size;
+          splice @$_, 1, 0, '# DEVELOPERS:' unless $_->grep($develop_tag)->size;
+            })
+      ->map(sub {
+          $replaced[0] += $_ =~
+              s/$shebang_tag/$shebang_replace/ if $shebang_replace;
+          $replaced[1] += $_ =~ 
+              s/$develop_tag/# DO NOT EDIT -- this is an auto generated file/;
+          $replaced[2] += $_ =~ s/$fatpack_tag/$packed/;
     $_;
   });
 
@@ -117,22 +142,27 @@ sub __lines_of {
 
 has includes => sub { Mojo::Home->new->detect->to_abs->child('lib') };
 
-option file => source => 'path to source script', (
+option str  => extra  => 'Modules to additionally use. e.g. App::Foo::Bar',
+    n_of => '@';
+option flag => namespace => 'Find (non-recursively) modules in each of -extra namespaces';
+option flag => replace_shebang => 'Modify the shebang to use /usr/bin/perl',
+    default => 0;
+option file => source => 'Path to source script', (
     required => 1, isa => 'Mojo::File');
-option file => target => 'path to target script', (
+option file => target => 'Path to target script', (
     required => 1, isa => 'Mojo::File');
-option flag => verbose => 'increase level of notification', default => 0;
+option flag => verbose => 'Increase level of notification', default => 0;
 
 app {
   my $self = shift;
 
-  $ENV{PERL5OPT} = join(' ', '-I'.$self->includes,
-    ($ENV{PERL5OPT} ? $ENV{PERL5OPT} : ()));
+  $ENV{PERL5OPT} = c('-I'.$self->includes,
+    ($ENV{PERL5OPT} ? $ENV{PERL5OPT} : ()))->uniq->join(' ')->to_string;
   say "PERL5OPT = $ENV{PERL5OPT}" if $self->verbose;
 
-  unlink $self->target;
-
-  my @replaced = $self->fatpack_script($self->source, $self->target, '#!/usr/bin/perl');
+  $self->target->remove->dirname->make_path;
+  my $shebang = $self->replace_shebang ? '#!/usr/bin/perl' : undef;
+  my @replaced = $self->fatpack_script($self->source, $self->target, $shebang);
 
   chmod 0755, $self->target;
 

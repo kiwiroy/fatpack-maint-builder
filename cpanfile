@@ -1,7 +1,9 @@
 # process with cpanm --installdeps --with-develop .
 
+test_requires 'Test::More' => '0.90';
+
 on develop => sub {
-   requires 'Applify' => "0.14";
+   requires 'Applify' => "==0.15";
    requires 'App::FatPacker' => "0";
    requires 'Mojolicious' => "7.55";
    requires 'Devel::Cover';

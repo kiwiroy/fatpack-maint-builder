@@ -40,7 +40,7 @@ WriteMakefile(
     },
   },
   BUILD_REQUIRES => {
-    'Test::More' => '0.90'
+    'Test::More' => '0.90',
   }
   ,
   PREREQ_PM => {}

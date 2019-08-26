@@ -1,1 +1,87 @@
-scripts/fatpack-maint-build.pl
+=pod
+
+=head1 NAME
+
+fatpack-maint-build.pl - fatpack a script for distribution
+
+=begin html
+
+<a href="https://travis-ci.org/kiwiroy/fatpack-maint-builder">
+  <img src="https://travis-ci.org/kiwiroy/fatpack-maint-builder.svg?branch=master"
+       alt="Travis Build Status">
+</a>
+
+<a href="https://coveralls.io/github/kiwiroy/fatpack-maint-builder?branch=master">
+  <img src="https://coveralls.io/repos/github/kiwiroy/fatpack-maint-builder/badge.svg?branch=master"
+       alt="Coverage Status" />
+</a>
+
+<a href="https://kritika.io/users/kiwiroy/repos/2685177578694295/heads/master/">
+  <img src="https://kritika.io/users/kiwiroy/repos/2685177578694295/heads/master/status.svg"
+       alt="Kritika Analysis Status" />
+</a>
+
+=end html
+
+=head1 DESCRIPTION
+
+An easy to use script to fatpack a script. Either copy this to your repository
+C<maint> directory or install and add to your C<cpanfile> under a feature.
+
+e.g.
+
+  on develop => sub {
+    # master
+    requires 'git@github.com:kiwiroy/fatpack-maint-builder.git';
+    # or release
+    requires 'https://github.com/kiwiroy/fatpack-maint-builder/releases/download/v1.1/FatPack-Maint-Build-1.1.tar.gz'
+  };
+
+A simple C<build.sh> will facilitate remembering how to run it.
+
+e.g.
+
+  #!/bin/sh
+
+  ./scripts/fatpack-maint-build.pl \
+      -source ./scripts/fatpack-maint-build.pl \
+      -target ./fatpack-maint-build.pl
+
+=head1 SYNOPSIS
+
+Examples:
+
+  fatpack-maint-build.pl -help
+
+  fatpack-maint-build.pl -source scripts/script.pl -target script.pl
+
+=head1 DETAILS
+
+The source script should include the string C<__FATPACK__> within a comment on a
+line on it's own. This will be replaced by the fatpacked code.
+
+The shebang line will be translated from C</usr/bin/env perl> to
+C</usr/bin/perl> for inclusion in L<EUMM|ExtUtils::MakeMaker> C<EXE_FILES>,
+where C<fixin()> will translate at C<make install> time.
+
+Optionally, the string C<DEVELOPERS: ...> can exist within a comment in the
+source script and will be replaced with a C<DO NOT EDIT> notice in the output
+file.
+
+=head1 SEE ALSO
+
+=over 4
+
+=item L<App::FatPacker>
+
+=item L<App::cpanminus>
+
+=item L<Applify>
+
+=item L<Mojolicious>
+
+=back
+
+
+=cut
+
